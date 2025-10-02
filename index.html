@@ -59,17 +59,15 @@
 
 <script>
   // Use your actual Google Apps Script endpoint here:
-const SHEET_API_URL = "https://script.google.com/macros/s/AKfycbw66tqA4tQXm9n606h9L_G3ewDkYdIiRwVJkOtTUMlFc2Wiikf1C-ou8_1NRv3EEHJrqg/exec";
+  const SHEET_API_URL = "https://script.google.com/a/macros/hawaii.edu/s/AKfycbw66tqA4tQXm9n606h9L_G3ewDkYdIiRwVJkOtTUMlFc2Wiikf1C-ou8_1NRv3EEHJrqg/exec";
 
   // Match your sheet’s column names
   const FIELD_MAP = {
     timestamp: "Timestamp",
-    email: "Email Address",
-    leiId: "Lei ID  The label on your lei should say something like \"LEI001\", \"LEI045\", etc.  ",
-    city: "City / Town and Country \nEnter the name of the city or place where the lei is right now.  ",
-    lat: "Latitude\n\nGo to https://mylocation.org, click “Allow”, and copy the Latitude.\nExample: 21.3099",
-    lon: "Longitude\n\nGo to https://mylocation.org, click “Allow”, and copy the Longitude.\nExample: -157.8581",
-    photo: "Upload a Photo"
+    leiId: "Lei ID",
+    city: "City / Town and Country",
+    lat: "Latitude",
+    lon: "Longitude"
   };
 
   const map = L.map("map", { worldCopyJump: true }).setView([20.8, -156.3], 3);
