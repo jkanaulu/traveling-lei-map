@@ -6,25 +6,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
 
   <!-- Leaflet CSS/JS -->
-  <link
-    rel="stylesheet"
-    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
-    crossorigin=""
-  />
-  <script
-    src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
-    crossorigin=""
-  ></script>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
   <!-- Marker clustering -->
-  <link
-    rel="stylesheet"
-    href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css"
-  />
-  <link
-    rel="stylesheet"
-    href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css"
-  />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css" />
   <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
 
   <style>
@@ -32,16 +19,16 @@
     #app { display: grid; grid-template-rows: auto 1fr; height: 100%; }
     header {
       padding: 10px 12px; gap: 12px; display: flex; flex-wrap: wrap;
-      align-items: center; border-bottom: 1px solid #eee; font-family: system-ui, sans-serif;
+      align-items: center; border-bottom: 1px solid #eee; font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
     }
     header h1 { font-size: 18px; margin: 0 8px 0 0; }
     label { font-size: 14px; }
     select, button { padding: 6px 10px; font-size: 14px; }
     #map { width: 100%; height: 100%; }
-    .popup small { color: #555; }
-      .legend { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+    .legend { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
     .legend-item { display:flex; align-items:center; gap:6px; padding:4px 6px; border:1px solid #eee; border-radius:6px; cursor:pointer; user-select:none; }
     .legend-swatch { width:14px; height:14px; border-radius:3px; border:1px solid rgba(0,0,0,0.2); }
+    .popup small { color: #555; }
   </style>
 </head>
 <body>
@@ -63,10 +50,10 @@
 </div>
 
 <script>
-  // Use your actual Google Apps Script endpoint here:
-  const SHEET_API_URL = "https://script.google.com/a/macros/hawaii.edu/s/AKfycbw66tqA4tQXm9n606h9L_G3ewDkYdIiRwVJkOtTUMlFc2Wiikf1C-ou8_1NRv3EEHJrqg/exec";
+  // 1) Your Apps Script Web App endpoint (public /exec URL)
+  const SHEET_API_URL = "https://script.google.com/macros/s/AKfycbw66tqA4tQXm9n606h9L_G3ewDkYdIiRwVJkOtTUMlFc2Wiikf1C-ou8_1NRv3EEHJrqg/exec";
 
-  // Match your sheet’s column names
+  // 2) Field names (must match your JSON keys exactly)
   const FIELD_MAP = {
     timestamp: "Timestamp",
     leiId: "Lei ID",
@@ -75,6 +62,7 @@
     lon: "Longitude"
   };
 
+  // 3) Map bootstrap
   const map = L.map("map", { worldCopyJump: true }).setView([20.8, -156.3], 3);
   L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
     attribution: "© OpenStreetMap contributors"
@@ -82,7 +70,7 @@
 
   const clusterGroup = L.markerClusterGroup();
   map.addLayer(clusterGroup);
-  const leiLayers = new Map();
+  const leiLayers = new Map(); // leiId -> { markers, line, color }
 
   function colorForLei(leiId) {
     let hash = 0;
@@ -91,11 +79,12 @@
     return `hsl(${hue}, 70%, 45%)`;
   }
 
+  // 4) Fetch + normalize
   async function fetchRows() {
     const res = await fetch(SHEET_API_URL, { cache: "no-store" });
     if (!res.ok) throw new Error(`Fetch failed: ${res.status}`);
     const json = await res.json();
-    const rows = Array.isArray(json?.data) ? json.data : json;
+    const rows = Array.isArray(json && json.data) ? json.data : json; // handle {data:[...]} or [...]
 
     return rows
       .map(r => {
@@ -114,6 +103,7 @@
       .sort((a, b) => a.timestamp - b.timestamp);
   }
 
+  // 5) Render
   function clearMap() {
     clusterGroup.clearLayers();
     leiLayers.forEach(({ markers, line }) => {
@@ -121,6 +111,57 @@
       if (line) map.removeLayer(line);
     });
     leiLayers.clear();
+  }
+
+  function buildLegend(byLei) {
+    const legend = document.getElementById("legend");
+    legend.innerHTML = "";
+    Array.from(byLei.keys()).sort().forEach(leiId => {
+      const color = colorForLei(leiId);
+      const item = document.createElement("div");
+      item.className = "legend-item";
+      item.dataset.leiId = leiId;
+      const sw = document.createElement("span");
+      sw.className = "legend-swatch";
+      sw.style.background = color;
+      const lbl = document.createElement("span");
+      lbl.textContent = leiId;
+      item.appendChild(sw);
+      item.appendChild(lbl);
+      item.addEventListener("click", () => {
+        const sel = document.getElementById("leiFilter");
+        sel.value = (sel.value === leiId ? "__ALL__" : leiId);
+        applyFilter();
+        highlightSelection();
+      });
+      legend.appendChild(item);
+    });
+    highlightSelection();
+  }
+
+  function highlightSelection() {
+    const sel = document.getElementById("leiFilter").value;
+    leiLayers.forEach((obj, leiId) => {
+      const mainColor = colorForLei(leiId);
+      const dimColor = "#b9b9b9";
+      const active = (sel === "__ALL__" || sel === leiId);
+      obj.line.setStyle({ color: active ? mainColor : dimColor, opacity: active ? 0.95 : 0.4 });
+      obj.markers.eachLayer(layer => {
+        if (layer.setStyle) {
+          layer.setStyle({
+            color: active ? mainColor : dimColor,
+            fillColor: active ? mainColor : dimColor,
+            fillOpacity: active ? 0.35 : 0.2,
+            opacity: active ? 1 : 0.6
+          });
+        }
+      });
+    });
+    const selVal = sel;
+    document.querySelectorAll('#legend .legend-item').forEach(el => {
+      el.style.opacity = (selVal === "__ALL__" || el.dataset.leiId === selVal) ? "1" : "0.45";
+      el.style.borderColor = (selVal !== "__ALL__" && el.dataset.leiId === selVal) ? "#999" : "#eee";
+    });
   }
 
   function render(data) {
@@ -132,14 +173,12 @@
       byLei.get(d.leiId).push(d);
     });
 
-    // Build filter options
     const leiFilter = document.getElementById("leiFilter");
     const previous = leiFilter.value;
-    leiFilter.innerHTML = `<option value="__ALL__">All Leis</option>` +
+    leiFilter.innerHTML = '<option value="__ALL__">All Leis</option>' +
       Array.from(byLei.keys()).sort().map(id => `<option value="${id}">${id}</option>`).join("");
     if ([...byLei.keys()].includes(previous)) leiFilter.value = previous;
 
-    // Build legend
     buildLegend(byLei);
 
     const allLatLngs = [];
@@ -157,57 +196,7 @@
         const prettyTime = isNaN(d.timestamp) ? "" : d.timestamp.toLocaleString();
         const popupHtml = `
           <div class="popup">
-            <div><strong>${leiId}</strong>${d.city ? " — " + d.city : ""}</div>
-            <small>${prettyTime}</small>
-          </div>
-        `;
-
-        const m = L.circleMarker(ll, {
-          radius: 6,
-          color,
-          weight: 2,
-          fillColor: color,
-          fillOpacity: 0.35
-        }).bindPopup(popupHtml);
-
-        markerGroup.addLayer(m);
-      });
-
-      const line = L.polyline(path, { color, weight: 3, opacity: 0.9 });
-      clusterGroup.addLayer(markerGroup);
-      line.addTo(map);
-
-      leiLayers.set(leiId, { markers: markerGroup, line, color });
-    });
-
-    if (allLatLngs.length) {
-      const bounds = L.latLngBounds(allLatLngs);
-      map.fitBounds(bounds.pad(0.15));
-    }
-  });
-
-    const leiFilter = document.getElementById("leiFilter");
-    const previous = leiFilter.value;
-    leiFilter.innerHTML = `<option value="__ALL__">All Leis</option>` +
-      Array.from(byLei.keys()).sort().map(id => `<option value="${id}">${id}</option>`).join("");
-    if ([...byLei.keys()].includes(previous)) leiFilter.value = previous;
-
-    const allLatLngs = [];
-
-    byLei.forEach((rows, leiId) => {
-      const color = colorForLei(leiId);
-      const markerGroup = L.layerGroup();
-      const path = [];
-
-      rows.forEach(d => {
-        const ll = [d.lat, d.lon];
-        path.push(ll);
-        allLatLngs.push(ll);
-
-        const prettyTime = isNaN(d.timestamp) ? "" : d.timestamp.toLocaleString();
-        const popupHtml = `
-          <div class="popup">
-            <div><strong>${leiId}</strong>${d.city ? " — " + d.city : ""}</div>
+            <div><strong>${leiId}</strong>${d.city ? ' — ' + d.city : ''}</div>
             <small>${prettyTime}</small>
           </div>
         `;
@@ -253,76 +242,20 @@
   document.getElementById("leiFilter").addEventListener("change", () => { applyFilter(); highlightSelection(); });
   document.getElementById("refreshBtn").addEventListener("click", init);
 
-  // Legend builder + interactions
-  function buildLegend(byLei) {
-    const legend = document.getElementById("legend");
-    legend.innerHTML = "";
-    Array.from(byLei.keys()).sort().forEach(leiId => {
-      const color = colorForLei(leiId);
-      const item = document.createElement("div");
-      item.className = "legend-item";
-      item.dataset.leiId = leiId;
-      const sw = document.createElement("span");
-      sw.className = "legend-swatch";
-      sw.style.background = color;
-      const lbl = document.createElement("span");
-      lbl.textContent = leiId;
-      item.appendChild(sw);
-      item.appendChild(lbl);
-      item.addEventListener("click", () => {
-        // clicking a legend item toggles the dropdown filter
-        const sel = document.getElementById("leiFilter");
-        sel.value = (sel.value === leiId ? "__ALL__" : leiId);
-        applyFilter();
-        highlightSelection();
-      });
-      legend.appendChild(item);
-    });
-    highlightSelection();
-  }
-
-  // Dim non-selected leis and keep selected in color
-  function highlightSelection() {
-    const sel = document.getElementById("leiFilter").value;
-    leiLayers.forEach((obj, leiId) => {
-      const mainColor = colorForLei(leiId);
-      const dimColor = "#b9b9b9";
-      const active = (sel === "__ALL__" || sel === leiId);
-      // recolor line
-      obj.line.setStyle({ color: active ? mainColor : dimColor, opacity: active ? 0.95 : 0.4 });
-      // recolor markers by re-adding with new style
-      obj.markers.eachLayer(layer => {
-        if (layer.setStyle) {
-          layer.setStyle({
-            color: active ? mainColor : dimColor,
-            fillColor: active ? mainColor : dimColor,
-            fillOpacity: active ? 0.35 : 0.2,
-            opacity: active ? 1 : 0.6
-          });
-        }
-      });
-    });
-    // update legend emphasis
-    const selVal = sel;
-    document.querySelectorAll('#legend .legend-item').forEach(el => {
-      el.style.opacity = (selVal === "__ALL__" || el.dataset.leiId === selVal) ? "1" : "0.45";
-      el.style.borderColor = (selVal !== "__ALL__" && el.dataset.leiId === selVal) ? "#999" : "#eee";
-    });
-  }
-
   async function init() {
     try {
       const data = await fetchRows();
       render(data);
       applyFilter();
+      highlightSelection();
     } catch (err) {
       console.error(err);
-      alert("Failed to load data. Check your SHEET_API_URL and deployment settings.");
+      alert("Failed to load data. Check your endpoint and try again.");
     }
   }
 
+  // First load
   init();
-
   // Auto-refresh every 2 minutes
   setInterval(() => { init(); }, 2 * 60 * 1000);
 </script>
