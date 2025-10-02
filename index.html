@@ -1,11 +1,12 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- Simple favicon to stop 404s (🌺 emoji as SVG) -->
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E🌺%3C/text%3E%3C/svg%3E">
   <meta charset="utf-8" />
   <title>Traveling Leis – Live Map</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <!-- Favicon to prevent 404 -->
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E🌺%3C/text%3E%3C/svg%3E" />
 
   <!-- Leaflet CSS/JS -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
@@ -36,7 +37,7 @@
 <body>
 <div id="app">
   <header>
-    <h1>🌺 Traveling Leis – Live Map</h1>
+    <h1>Traveling Leis – Live Map</h1>
 
     <label for="leiFilter"><strong>Filter by Lei ID:</strong></label>
     <select id="leiFilter">
@@ -70,82 +71,74 @@
     attribution: "© OpenStreetMap contributors"
   }).addTo(map);
 
-  const clusterGroup = L.markerClusterGroup({
-    iconCreateFunction: (cluster) => {
-      const children = cluster.getAllChildMarkers();
-      // if all child markers share the same color (i.e., same Lei ID), color the cluster; otherwise grey
-      let color = null; let mixed = false;
-      for (const m of children) {
-        const c = m.options && m.options.color;
-        if (color === null) color = c; else if (c !== color) { mixed = true; break; }
-      }
-      const bg = mixed || !color ? '#888' : color;
-      const count = cluster.getChildCount();
-      const html = `<div style="background:${bg}; border: 2px solid rgba(0,0,0,0.3); color:#fff;"><span>${count}</span></div>`;
-      return new L.DivIcon({ html, className: 'marker-cluster', iconSize: L.point(40,40) });
-    }
-  });
+  // Simple default cluster group (no fancy HTML to avoid syntax pitfalls)
+  const clusterGroup = L.markerClusterGroup();
   map.addLayer(clusterGroup);
-  const leiLayers = new Map(); // leiId -> { markers, line, color }
 
+  // Store layers per Lei ID
+  const leiLayers = new Map(); // leiId -> { markers: L.LayerGroup, line: L.Polyline, color: string }
+
+  // Stable color per Lei ID
   function colorForLei(leiId) {
-    let hash = 0;
-    for (let i = 0; i < leiId.length; i++) hash = leiId.charCodeAt(i) + ((hash << 5) - hash);
-    const hue = Math.abs(hash) % 360;
-    return `hsl(${hue}, 70%, 45%)`;
+    var hash = 0;
+    for (var i = 0; i < leiId.length; i++) {
+      hash = leiId.charCodeAt(i) + ((hash << 5) - hash);
+    }
+    var hue = Math.abs(hash) % 360;
+    return "hsl(" + hue + ", 70%, 45%)";
   }
 
   // 4) Fetch + normalize
   async function fetchRows() {
     const res = await fetch(SHEET_API_URL, { cache: "no-store" });
-    if (!res.ok) throw new Error(`Fetch failed: ${res.status}`);
+    if (!res.ok) throw new Error("Fetch failed: " + res.status);
     const json = await res.json();
     const rows = Array.isArray(json && json.data) ? json.data : json; // handle {data:[...]} or [...]
 
     return rows
-      .map(r => {
-        const lat = parseFloat(r[FIELD_MAP.lat]);
-        const lon = parseFloat(r[FIELD_MAP.lon]);
-        const leiId = (r[FIELD_MAP.leiId] || "").toString().trim();
+      .map(function(r) {
+        var lat = parseFloat(r[FIELD_MAP.lat]);
+        var lon = parseFloat(r[FIELD_MAP.lon]);
+        var leiId = (r[FIELD_MAP.leiId] || "").toString().trim();
         return {
           timestamp: new Date(r[FIELD_MAP.timestamp]),
-          leiId,
+          leiId: leiId,
           city: r[FIELD_MAP.city] || "",
-          lat: Number.isFinite(lat) ? lat : null,
-          lon: Number.isFinite(lon) ? lon : null
+          lat: isFinite(lat) ? lat : null,
+          lon: isFinite(lon) ? lon : null
         };
       })
-      .filter(d => d.lat !== null && d.lon !== null && d.leiId !== "")
-      .sort((a, b) => a.timestamp - b.timestamp);
+      .filter(function(d) { return d.lat !== null && d.lon !== null && d.leiId !== ""; })
+      .sort(function(a, b) { return a.timestamp - b.timestamp; });
   }
 
   // 5) Render
   function clearMap() {
     clusterGroup.clearLayers();
-    leiLayers.forEach(({ markers, line }) => {
-      if (markers) map.removeLayer(markers);
-      if (line) map.removeLayer(line);
+    leiLayers.forEach(function(obj) {
+      if (obj.markers) { map.removeLayer(obj.markers); }
+      if (obj.line) { map.removeLayer(obj.line); }
     });
     leiLayers.clear();
   }
 
   function buildLegend(byLei) {
-    const legend = document.getElementById("legend");
+    var legend = document.getElementById("legend");
     legend.innerHTML = "";
-    Array.from(byLei.keys()).sort().forEach(leiId => {
-      const color = colorForLei(leiId);
-      const item = document.createElement("div");
+    Array.from(byLei.keys()).sort().forEach(function(leiId) {
+      var color = colorForLei(leiId);
+      var item = document.createElement("div");
       item.className = "legend-item";
-      item.dataset.leiId = leiId;
-      const sw = document.createElement("span");
+      item.setAttribute("data-lei-id", leiId);
+      var sw = document.createElement("span");
       sw.className = "legend-swatch";
       sw.style.background = color;
-      const lbl = document.createElement("span");
+      var lbl = document.createElement("span");
       lbl.textContent = leiId;
       item.appendChild(sw);
       item.appendChild(lbl);
-      item.addEventListener("click", () => {
-        const sel = document.getElementById("leiFilter");
+      item.addEventListener("click", function() {
+        var sel = document.getElementById("leiFilter");
         sel.value = (sel.value === leiId ? "__ALL__" : leiId);
         applyFilter();
         highlightSelection();
@@ -156,13 +149,13 @@
   }
 
   function highlightSelection() {
-    const sel = document.getElementById("leiFilter").value;
-    leiLayers.forEach((obj, leiId) => {
-      const mainColor = colorForLei(leiId);
-      const dimColor = "#b9b9b9";
-      const active = (sel === "__ALL__" || sel === leiId);
+    var sel = document.getElementById("leiFilter").value;
+    leiLayers.forEach(function(obj, leiId) {
+      var mainColor = colorForLei(leiId);
+      var dimColor = "#b9b9b9";
+      var active = (sel === "__ALL__" || sel === leiId);
       obj.line.setStyle({ color: active ? mainColor : dimColor, opacity: active ? 0.95 : 0.4 });
-      obj.markers.eachLayer(layer => {
+      obj.markers.eachLayer(function(layer) {
         if (layer.setStyle) {
           layer.setStyle({
             color: active ? mainColor : dimColor,
@@ -173,74 +166,55 @@
         }
       });
     });
-    // refresh cluster icons to reflect any color changes
-    if (clusterGroup && typeof clusterGroup.refreshClusters === 'function') {
-      clusterGroup.refreshClusters();
-    }
-    const selVal = sel;
-    document.querySelectorAll('#legend .legend-item').forEach(el => {
-      el.style.opacity = (selVal === "__ALL__" || el.dataset.leiId === selVal) ? "1" : "0.45";
-      el.style.borderColor = (selVal !== "__ALL__" && el.dataset.leiId === selVal) ? "#999" : "#eee";
-    });
-  });
-      obj.markers.eachLayer(layer => {
-        if (layer.setStyle) {
-          layer.setStyle({
-            color: active ? mainColor : dimColor,
-            fillColor: active ? mainColor : dimColor,
-            fillOpacity: active ? 0.35 : 0.2,
-            opacity: active ? 1 : 0.6
-          });
-        }
-      });
-    });
-    const selVal = sel;
-    document.querySelectorAll('#legend .legend-item').forEach(el => {
-      el.style.opacity = (selVal === "__ALL__" || el.dataset.leiId === selVal) ? "1" : "0.45";
-      el.style.borderColor = (selVal !== "__ALL__" && el.dataset.leiId === selVal) ? "#999" : "#eee";
+    var selVal = sel;
+    document.querySelectorAll('#legend .legend-item').forEach(function(el) {
+      var isActive = (selVal === "__ALL__" || el.getAttribute("data-lei-id") === selVal);
+      el.style.opacity = isActive ? "1" : "0.45";
+      el.style.borderColor = (!isActive && selVal !== "__ALL__") ? "#eee" : (isActive && selVal !== "__ALL__" ? "#999" : "#eee");
     });
   }
 
   function render(data) {
     clearMap();
 
-    const byLei = new Map();
-    data.forEach(d => {
+    var byLei = new Map();
+    data.forEach(function(d) {
       if (!byLei.has(d.leiId)) byLei.set(d.leiId, []);
       byLei.get(d.leiId).push(d);
     });
 
-    const leiFilter = document.getElementById("leiFilter");
-    const previous = leiFilter.value;
-    leiFilter.innerHTML = '<option value="__ALL__">All Leis</option>' +
-      Array.from(byLei.keys()).sort().map(id => `<option value="${id}">${id}</option>`).join("");
-    if ([...byLei.keys()].includes(previous)) leiFilter.value = previous;
+    var leiFilter = document.getElementById("leiFilter");
+    var previous = leiFilter.value;
+    var optionsHtml = '<option value="__ALL__">All Leis</option>';
+    Array.from(byLei.keys()).sort().forEach(function(id) {
+      optionsHtml += '<option value="' + id + '">' + id + '</option>';
+    });
+    leiFilter.innerHTML = optionsHtml;
+    if (Array.from(byLei.keys()).indexOf(previous) !== -1) { leiFilter.value = previous; }
 
     buildLegend(byLei);
 
-    const allLatLngs = [];
+    var allLatLngs = [];
 
-    byLei.forEach((rows, leiId) => {
-      const color = colorForLei(leiId);
-      const markerGroup = L.layerGroup();
-      const path = [];
+    byLei.forEach(function(rows, leiId) {
+      var color = colorForLei(leiId);
+      var markerGroup = L.layerGroup();
+      var path = [];
 
-      rows.forEach(d => {
-        const ll = [d.lat, d.lon];
+      rows.forEach(function(d) {
+        var ll = [d.lat, d.lon];
         path.push(ll);
         allLatLngs.push(ll);
 
-        const prettyTime = isNaN(d.timestamp) ? "" : d.timestamp.toLocaleString();
-        const popupHtml = `
-          <div class="popup">
-            <div><strong>${leiId}</strong>${d.city ? ' — ' + d.city : ''}</div>
-            <small>${prettyTime}</small>
-          </div>
-        `;
+        var prettyTime = isNaN(d.timestamp) ? "" : d.timestamp.toLocaleString();
+        var popupHtml = '<div class="popup">' +
+          '<div><strong>' + leiId + '</strong>' + (d.city ? ' — ' + d.city : '') + '</div>' +
+          '<small>' + prettyTime + '</small>' +
+          '</div>';
 
-        const m = L.circleMarker(ll, {
+        var m = L.circleMarker(ll, {
           radius: 6,
-          color,
+          color: color,
           weight: 2,
           fillColor: color,
           fillOpacity: 0.35
@@ -249,23 +223,23 @@
         markerGroup.addLayer(m);
       });
 
-      const line = L.polyline(path, { color, weight: 3, opacity: 0.9 });
+      var line = L.polyline(path, { color: color, weight: 3, opacity: 0.9 });
       clusterGroup.addLayer(markerGroup);
       line.addTo(map);
 
-      leiLayers.set(leiId, { markers: markerGroup, line, color });
+      leiLayers.set(leiId, { markers: markerGroup, line: line, color: color });
     });
 
     if (allLatLngs.length) {
-      const bounds = L.latLngBounds(allLatLngs);
+      var bounds = L.latLngBounds(allLatLngs);
       map.fitBounds(bounds.pad(0.15));
     }
   }
 
   function applyFilter() {
-    const pick = document.getElementById("leiFilter").value;
-    leiLayers.forEach((obj, leiId) => {
-      const show = (pick === "__ALL__" || pick === leiId);
+    var pick = document.getElementById("leiFilter").value;
+    leiLayers.forEach(function(obj, leiId) {
+      var show = (pick === "__ALL__" || pick === leiId);
       if (show) {
         clusterGroup.addLayer(obj.markers);
         obj.line.addTo(map);
@@ -276,7 +250,10 @@
     });
   }
 
-  document.getElementById("leiFilter").addEventListener("change", () => { applyFilter(); highlightSelection(); });
+  document.getElementById("leiFilter").addEventListener("change", function() {
+    applyFilter();
+    highlightSelection();
+  });
   document.getElementById("refreshBtn").addEventListener("click", init);
 
   async function init() {
@@ -294,7 +271,7 @@
   // First load
   init();
   // Auto-refresh every 2 minutes
-  setInterval(() => { init(); }, 2 * 60 * 1000);
+  setInterval(function() { init(); }, 2 * 60 * 1000);
 </script>
 </body>
 </html>
