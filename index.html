@@ -39,6 +39,9 @@
     select, button { padding: 6px 10px; font-size: 14px; }
     #map { width: 100%; height: 100%; }
     .popup small { color: #555; }
+      .legend { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+    .legend-item { display:flex; align-items:center; gap:6px; padding:4px 6px; border:1px solid #eee; border-radius:6px; cursor:pointer; user-select:none; }
+    .legend-swatch { width:14px; height:14px; border-radius:3px; border:1px solid rgba(0,0,0,0.2); }
   </style>
 </head>
 <body>
@@ -52,6 +55,8 @@
     </select>
 
     <button id="refreshBtn" title="Reload data">Refresh</button>
+
+    <div id="legend" class="legend" aria-label="Lei color legend"></div>
   </header>
 
   <div id="map"></div>
@@ -120,11 +125,66 @@
 
   function render(data) {
     clearMap();
+
     const byLei = new Map();
     data.forEach(d => {
       if (!byLei.has(d.leiId)) byLei.set(d.leiId, []);
       byLei.get(d.leiId).push(d);
     });
+
+    // Build filter options
+    const leiFilter = document.getElementById("leiFilter");
+    const previous = leiFilter.value;
+    leiFilter.innerHTML = `<option value="__ALL__">All Leis</option>` +
+      Array.from(byLei.keys()).sort().map(id => `<option value="${id}">${id}</option>`).join("");
+    if ([...byLei.keys()].includes(previous)) leiFilter.value = previous;
+
+    // Build legend
+    buildLegend(byLei);
+
+    const allLatLngs = [];
+
+    byLei.forEach((rows, leiId) => {
+      const color = colorForLei(leiId);
+      const markerGroup = L.layerGroup();
+      const path = [];
+
+      rows.forEach(d => {
+        const ll = [d.lat, d.lon];
+        path.push(ll);
+        allLatLngs.push(ll);
+
+        const prettyTime = isNaN(d.timestamp) ? "" : d.timestamp.toLocaleString();
+        const popupHtml = `
+          <div class="popup">
+            <div><strong>${leiId}</strong>${d.city ? " — " + d.city : ""}</div>
+            <small>${prettyTime}</small>
+          </div>
+        `;
+
+        const m = L.circleMarker(ll, {
+          radius: 6,
+          color,
+          weight: 2,
+          fillColor: color,
+          fillOpacity: 0.35
+        }).bindPopup(popupHtml);
+
+        markerGroup.addLayer(m);
+      });
+
+      const line = L.polyline(path, { color, weight: 3, opacity: 0.9 });
+      clusterGroup.addLayer(markerGroup);
+      line.addTo(map);
+
+      leiLayers.set(leiId, { markers: markerGroup, line, color });
+    });
+
+    if (allLatLngs.length) {
+      const bounds = L.latLngBounds(allLatLngs);
+      map.fitBounds(bounds.pad(0.15));
+    }
+  });
 
     const leiFilter = document.getElementById("leiFilter");
     const previous = leiFilter.value;
@@ -190,8 +250,65 @@
     });
   }
 
-  document.getElementById("leiFilter").addEventListener("change", applyFilter);
+  document.getElementById("leiFilter").addEventListener("change", () => { applyFilter(); highlightSelection(); });
   document.getElementById("refreshBtn").addEventListener("click", init);
+
+  // Legend builder + interactions
+  function buildLegend(byLei) {
+    const legend = document.getElementById("legend");
+    legend.innerHTML = "";
+    Array.from(byLei.keys()).sort().forEach(leiId => {
+      const color = colorForLei(leiId);
+      const item = document.createElement("div");
+      item.className = "legend-item";
+      item.dataset.leiId = leiId;
+      const sw = document.createElement("span");
+      sw.className = "legend-swatch";
+      sw.style.background = color;
+      const lbl = document.createElement("span");
+      lbl.textContent = leiId;
+      item.appendChild(sw);
+      item.appendChild(lbl);
+      item.addEventListener("click", () => {
+        // clicking a legend item toggles the dropdown filter
+        const sel = document.getElementById("leiFilter");
+        sel.value = (sel.value === leiId ? "__ALL__" : leiId);
+        applyFilter();
+        highlightSelection();
+      });
+      legend.appendChild(item);
+    });
+    highlightSelection();
+  }
+
+  // Dim non-selected leis and keep selected in color
+  function highlightSelection() {
+    const sel = document.getElementById("leiFilter").value;
+    leiLayers.forEach((obj, leiId) => {
+      const mainColor = colorForLei(leiId);
+      const dimColor = "#b9b9b9";
+      const active = (sel === "__ALL__" || sel === leiId);
+      // recolor line
+      obj.line.setStyle({ color: active ? mainColor : dimColor, opacity: active ? 0.95 : 0.4 });
+      // recolor markers by re-adding with new style
+      obj.markers.eachLayer(layer => {
+        if (layer.setStyle) {
+          layer.setStyle({
+            color: active ? mainColor : dimColor,
+            fillColor: active ? mainColor : dimColor,
+            fillOpacity: active ? 0.35 : 0.2,
+            opacity: active ? 1 : 0.6
+          });
+        }
+      });
+    });
+    // update legend emphasis
+    const selVal = sel;
+    document.querySelectorAll('#legend .legend-item').forEach(el => {
+      el.style.opacity = (selVal === "__ALL__" || el.dataset.leiId === selVal) ? "1" : "0.45";
+      el.style.borderColor = (selVal !== "__ALL__" && el.dataset.leiId === selVal) ? "#999" : "#eee";
+    });
+  }
 
   async function init() {
     try {
@@ -205,6 +322,9 @@
   }
 
   init();
+
+  // Auto-refresh every 2 minutes
+  setInterval(() => { init(); }, 2 * 60 * 1000);
 </script>
 </body>
 </html>
