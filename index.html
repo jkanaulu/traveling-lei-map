@@ -1,6 +1,8 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+  <!-- Simple favicon to stop 404s (🌺 emoji as SVG) -->
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E🌺%3C/text%3E%3C/svg%3E">
   <meta charset="utf-8" />
   <title>Traveling Leis – Live Map</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -68,7 +70,21 @@
     attribution: "© OpenStreetMap contributors"
   }).addTo(map);
 
-  const clusterGroup = L.markerClusterGroup();
+  const clusterGroup = L.markerClusterGroup({
+    iconCreateFunction: (cluster) => {
+      const children = cluster.getAllChildMarkers();
+      // if all child markers share the same color (i.e., same Lei ID), color the cluster; otherwise grey
+      let color = null; let mixed = false;
+      for (const m of children) {
+        const c = m.options && m.options.color;
+        if (color === null) color = c; else if (c !== color) { mixed = true; break; }
+      }
+      const bg = mixed || !color ? '#888' : color;
+      const count = cluster.getChildCount();
+      const html = `<div style="background:${bg}; border: 2px solid rgba(0,0,0,0.3); color:#fff;"><span>${count}</span></div>`;
+      return new L.DivIcon({ html, className: 'marker-cluster', iconSize: L.point(40,40) });
+    }
+  });
   map.addLayer(clusterGroup);
   const leiLayers = new Map(); // leiId -> { markers, line, color }
 
@@ -146,6 +162,27 @@
       const dimColor = "#b9b9b9";
       const active = (sel === "__ALL__" || sel === leiId);
       obj.line.setStyle({ color: active ? mainColor : dimColor, opacity: active ? 0.95 : 0.4 });
+      obj.markers.eachLayer(layer => {
+        if (layer.setStyle) {
+          layer.setStyle({
+            color: active ? mainColor : dimColor,
+            fillColor: active ? mainColor : dimColor,
+            fillOpacity: active ? 0.35 : 0.2,
+            opacity: active ? 1 : 0.6
+          });
+        }
+      });
+    });
+    // refresh cluster icons to reflect any color changes
+    if (clusterGroup && typeof clusterGroup.refreshClusters === 'function') {
+      clusterGroup.refreshClusters();
+    }
+    const selVal = sel;
+    document.querySelectorAll('#legend .legend-item').forEach(el => {
+      el.style.opacity = (selVal === "__ALL__" || el.dataset.leiId === selVal) ? "1" : "0.45";
+      el.style.borderColor = (selVal !== "__ALL__" && el.dataset.leiId === selVal) ? "#999" : "#eee";
+    });
+  });
       obj.markers.eachLayer(layer => {
         if (layer.setStyle) {
           layer.setStyle({
