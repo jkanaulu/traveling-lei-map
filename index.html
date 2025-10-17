@@ -90,12 +90,11 @@
   // Store layers per Lei ID
   const leiLayers = new Map(); // leiId -> { markers: L.LayerGroup, line: L.Polyline, color: string }
 
-  // Stable color per Lei ID
-  function colorForLei(leiId) {
-    var hash = 0;
-    for (var i = 0; i < leiId.length; i++) {
-      hash = leiId.charCodeAt(i) + ((hash << 5) - hash);
-    }
+  // Stable color per Lei ID (palette by golden angle so colors are distinct)
+function leiColorByIndex(index, total) {
+  var hue = (index * 137.508) % 360; // evenly spaced hues
+  return "hsl(" + hue + ", 75%, 45%)";
+}
     var hue = Math.abs(hash) % 360;
     return "hsl(" + hue + ", 70%, 45%)";
   }
@@ -191,39 +190,63 @@
     leiLayers.clear();
   }
 
-  function buildLegend(byLei) {
-    var legend = document.getElementById("legend");
-    legend.innerHTML = "";
-    Array.from(byLei.keys()).sort().forEach(function(leiId) {
-      var color = colorForLei(leiId);
-      var item = document.createElement("div");
-      item.className = "legend-item";
-      item.setAttribute("data-lei-id", leiId);
-      var sw = document.createElement("span");
-      sw.className = "legend-swatch";
-      sw.style.background = color;
-      var lbl = document.createElement("span");
-      lbl.textContent = leiId;
-      item.appendChild(sw);
-      item.appendChild(lbl);
-      item.addEventListener("click", function() {
-        var sel = document.getElementById("leiFilter");
-        sel.value = (sel.value === leiId ? "__ALL__" : leiId);
-        applyFilter();
-        highlightSelection();
-      });
+  function buildLegend(byLei, colorMap) {
+  var legend = document.getElementById("legend");
+  legend.innerHTML = "";
+  Array.from(byLei.keys()).sort().forEach(function(leiId) {
+    var color = colorMap.get(leiId) || '#888';
+    var item = document.createElement("div");
+    item.className = "legend-item";
+    item.setAttribute("data-lei-id", leiId);
+    var sw = document.createElement("span");
+    sw.className = "legend-swatch";
+    sw.style.background = color;
+    var lbl = document.createElement("span");
+    lbl.textContent = leiId;
+    item.appendChild(sw);
+    item.appendChild(lbl);
+    item.addEventListener("click", function() {
+      var sel = document.getElementById("leiFilter");
+      sel.value = (sel.value === leiId ? "__ALL__" : leiId);
+      applyFilter();
+      highlightSelection();
+    });
+    legend.appendChild(item);
+  });
+  highlightSelection();
+}
+);
       legend.appendChild(item);
     });
     highlightSelection();
   }
 
   function highlightSelection() {
-    var sel = document.getElementById("leiFilter").value;
-    leiLayers.forEach(function(obj, leiId) {
-      var mainColor = colorForLei(leiId);
-      var dimColor = "#b9b9b9";
-      var active = (sel === "__ALL__" || sel === leiId);
-      obj.line.setStyle({ color: active ? mainColor : dimColor, opacity: active ? 0.95 : 0.4 });
+  var sel = document.getElementById("leiFilter").value;
+  leiLayers.forEach(function(obj, leiId) {
+    var mainColor = obj.color; // use precomputed distinct color
+    var dimColor = "#b9b9b9";
+    var active = (sel === "__ALL__" || sel === leiId);
+    obj.line.setStyle({ color: active ? mainColor : dimColor, opacity: active ? 0.95 : 0.4 });
+    obj.markers.eachLayer(function(layer) {
+      if (layer.setStyle) {
+        layer.setStyle({
+          color: active ? mainColor : dimColor,
+          fillColor: active ? mainColor : dimColor,
+          fillOpacity: active ? 0.35 : 0.2,
+          opacity: active ? 1 : 0.6
+        });
+      }
+    });
+  });
+  var selVal = sel;
+  document.querySelectorAll('#legend .legend-item').forEach(function(el) {
+    var isActive = (selVal === "__ALL__" || el.getAttribute("data-lei-id") === selVal);
+    el.style.opacity = isActive ? "1" : "0.45";
+    el.style.borderColor = (!isActive && selVal !== "__ALL__") ? "#eee" : (isActive && selVal !== "__ALL__" ? "#999" : "#eee");
+  });
+}
+);
       obj.markers.eachLayer(function(layer) {
         if (layer.setStyle) {
           layer.setStyle({
@@ -261,12 +284,17 @@
     leiFilter.innerHTML = optionsHtml;
     if (Array.from(byLei.keys()).indexOf(previous) !== -1) { leiFilter.value = previous; }
 
-    buildLegend(byLei);
+    // Build a distinct color map for all leis (stable order)
+    var ids = Array.from(byLei.keys()).sort();
+    var colorMap = new Map();
+    ids.forEach(function(id, i){ colorMap.set(id, leiColorByIndex(i, ids.length)); });
+
+    buildLegend(byLei, colorMap);
 
     var allLatLngs = [];
 
     byLei.forEach(function(rows, leiId) {
-      var color = colorForLei(leiId);
+      var color = colorMap.get(leiId) || '#2a7fff';
       var markerGroup = L.layerGroup();
       var path = [];
 
@@ -291,6 +319,13 @@
 
         markerGroup.addLayer(m);
       });
+
+      var line = L.polyline(path, { color: color, weight: 3, opacity: 0.9 });
+      clusterGroup.addLayer(markerGroup);
+      line.addTo(map);
+
+      leiLayers.set(leiId, { markers: markerGroup, line: line, color: color });
+    });
 
       var line = L.polyline(path, { color: color, weight: 3, opacity: 0.9 });
       clusterGroup.addLayer(markerGroup);
