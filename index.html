@@ -18,21 +18,35 @@
   <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
 
   <style>
-    html, body { height: 100%; margin: 0; }
-    #app { display: grid; grid-template-rows: auto 1fr; height: 100%; }
-    header {
-      padding: 10px 12px; gap: 12px; display: flex; flex-wrap: wrap;
-      align-items: center; border-bottom: 1px solid #eee; font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
-    }
-    header h1 { font-size: 18px; margin: 0 8px 0 0; }
-    label { font-size: 14px; }
-    select, button { padding: 6px 10px; font-size: 14px; }
-    #map { width: 100%; height: 100%; }
-    .legend { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
-    .legend-item { display:flex; align-items:center; gap:6px; padding:4px 6px; border:1px solid #eee; border-radius:6px; cursor:pointer; user-select:none; }
-    .legend-swatch { width:14px; height:14px; border-radius:3px; border:1px solid rgba(0,0,0,0.2); }
-    .popup small { color: #555; }
-  </style>
+  html, body { height: 100%; margin: 0; }
+
+  /* Make the page fill the viewport reliably */
+  #app {
+    display: grid;
+    grid-template-rows: auto 1fr;
+    height: 100vh;            /* was 100%; use viewport height */
+  }
+
+  /* Give the map a guaranteed height */
+  #map {
+    width: 100%;
+    height: 100%;             /* fill the remaining grid row */
+    min-height: 70vh;         /* ensure it never collapses */
+  }
+
+  header {
+    padding: 10px 12px; gap: 12px; display: flex; flex-wrap: wrap;
+    align-items: center; border-bottom: 1px solid #eee; font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+  }
+  header h1 { font-size: 18px; margin: 0 8px 0 0; }
+  label { font-size: 14px; }
+  select, button { padding: 6px 10px; font-size: 14px; }
+
+  .legend { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  .legend-item { display:flex; align-items:center; gap:6px; padding:4px 6px; border:1px solid #eee; border-radius:6px; cursor:pointer; user-select:none; }
+  .legend-swatch { width:14px; height:14px; border-radius:3px; border:1px solid rgba(0,0,0,0.2); }
+  .popup small { color: #555; }
+</style>
 </head>
 <body>
 <div id="app">
@@ -82,6 +96,10 @@
   L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
     attribution: "© OpenStreetMap contributors"
   }).addTo(map);
+
+  // Ensure Leaflet lays out tiles correctly
+  setTimeout(function(){ map.invalidateSize(); }, 0);
+  window.addEventListener("resize", function(){ map.invalidateSize(); });
 
   // Simple default cluster group
   const clusterGroup = L.markerClusterGroup();
