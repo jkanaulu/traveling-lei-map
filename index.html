@@ -18,35 +18,34 @@
   <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
 
   <style>
-  html, body { height: 100%; margin: 0; }
+    html, body { height: 100%; margin: 0; }
 
-  /* Make the page fill the viewport reliably */
-  #app {
-    display: grid;
-    grid-template-rows: auto 1fr;
-    height: 100vh;            /* was 100%; use viewport height */
-  }
+    /* Full-height layout */
+    #app {
+      display: grid;
+      grid-template-rows: auto 1fr;
+      height: 100vh;
+    }
 
-  /* Give the map a guaranteed height */
-  #map {
-    width: 100%;
-    height: 100%;             /* fill the remaining grid row */
-    min-height: 70vh;         /* ensure it never collapses */
-  }
+    #map {
+      width: 100%;
+      height: 100%;
+      min-height: 70vh;
+    }
 
-  header {
-    padding: 10px 12px; gap: 12px; display: flex; flex-wrap: wrap;
-    align-items: center; border-bottom: 1px solid #eee; font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
-  }
-  header h1 { font-size: 18px; margin: 0 8px 0 0; }
-  label { font-size: 14px; }
-  select, button { padding: 6px 10px; font-size: 14px; }
+    header {
+      padding: 10px 12px; gap: 12px; display: flex; flex-wrap: wrap;
+      align-items: center; border-bottom: 1px solid #eee; font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+    }
+    header h1 { font-size: 18px; margin: 0 8px 0 0; }
+    label { font-size: 14px; }
+    select, button { padding: 6px 10px; font-size: 14px; }
 
-  .legend { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
-  .legend-item { display:flex; align-items:center; gap:6px; padding:4px 6px; border:1px solid #eee; border-radius:6px; cursor:pointer; user-select:none; }
-  .legend-swatch { width:14px; height:14px; border-radius:3px; border:1px solid rgba(0,0,0,0.2); }
-  .popup small { color: #555; }
-</style>
+    .legend { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+    .legend-item { display:flex; align-items:center; gap:6px; padding:4px 6px; border:1px solid #eee; border-radius:6px; cursor:pointer; user-select:none; }
+    .legend-swatch { width:14px; height:14px; border-radius:3px; border:1px solid rgba(0,0,0,0.2); }
+    .popup small { color: #555; }
+  </style>
 </head>
 <body>
 <div id="app">
@@ -67,111 +66,101 @@
 </div>
 
 <script>
-  // 1) Your Apps Script Web App endpoint (public /exec URL)
-  const SHEET_API_URL = "https://script.google.com/macros/s/AKfycby51HsMDb37R0vZZmW9Eirx80I6blvegVPdyBs7CqVPOE1iQVsRKPe3KpM0tfSuRKS5lA/exec";
+(function(){
+  'use strict';
 
-  // 2) Default field names (what our Apps Script returns by design)
-  const DEFAULT_FIELDS = {
+  // 1) Your Apps Script Web App endpoint (public /exec URL)
+  var SHEET_API_URL = "https://script.google.com/macros/s/AKfycby51HsMDb37R0vZZmW9Eirx80I6blvegVPdyBs7CqVPOE1iQVsRKPe3KpM0tfSuRKS5lA/exec";
+
+  // 2) Field name sets (auto-detect)
+  var DEFAULT_FIELDS = {
     timestamp: "Timestamp",
     leiId: "Lei ID",
     city: "City / Town and Country",
     lat: "Latitude",
     lon: "Longitude"
   };
-
-  // 2b) Alternate headers (if you ever point directly at a sheet/other API)
-  const ALT_FIELDS = {
+  var ALT_FIELDS = {
     timestamp: "Timestamp",
     leiId: "Unique Lei ID",
     city: "Your current city",
     lat: "Latitude (optional to respond)",
     lon: "Longitude  (optional to respond)"
   };
-
-  // Runtime-decided FIELD_MAP based on what keys exist in the first row
-  let FIELD_MAP = DEFAULT_FIELDS;
+  var FIELD_MAP = DEFAULT_FIELDS; // will be reassigned after first fetch if needed
 
   // 3) Map bootstrap
-  const map = L.map("map", { worldCopyJump: true }).setView([20.8, -156.3], 3);
-  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-    attribution: "© OpenStreetMap contributors"
+  var map = L.map('map', { worldCopyJump: true }).setView([20.8, -156.3], 3);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '© OpenStreetMap contributors'
   }).addTo(map);
-
-  // Ensure Leaflet lays out tiles correctly
   setTimeout(function(){ map.invalidateSize(); }, 0);
-  window.addEventListener("resize", function(){ map.invalidateSize(); });
+  window.addEventListener('resize', function(){ map.invalidateSize(); });
 
-  // Simple default cluster group
-  const clusterGroup = L.markerClusterGroup();
+  var clusterGroup = L.markerClusterGroup();
   map.addLayer(clusterGroup);
 
   // Store layers per Lei ID
-  const leiLayers = new Map(); // leiId -> { markers: L.LayerGroup, line: L.Polyline, color: string }
+  var leiLayers = new Map(); // leiId -> { markers, line, color }
 
-  // Stable color per Lei ID (palette by golden angle so colors are distinct)
-function leiColorByIndex(index, total) {
-  var hue = (index * 137.508) % 360; // evenly spaced hues
-  return "hsl(" + hue + ", 75%, 45%)";
-}
-    var hue = Math.abs(hash) % 360;
-    return "hsl(" + hue + ", 70%, 45%)";
+  // Distinct color palette
+  function leiColorByIndex(index) {
+    var hue = (index * 137.508) % 360; // golden-angle spacing
+    return 'hsl(' + hue + ', 75%, 45%)';
   }
 
   // --- Nominatim geocoding (city → lat/lon) with simple caching ---
-  const cityCache = new Map();
+  var cityCache = new Map();
   function getCacheKey(city) { return city.trim().toLowerCase(); }
-
   async function geocodeCity(city) {
     if (!city) return null;
-    const key = getCacheKey(city);
+    var key = getCacheKey(city);
     if (cityCache.has(key)) return cityCache.get(key);
     try {
-      // Try localStorage cache first
-      const lsKey = "geo_" + key;
-      const cached = localStorage.getItem(lsKey);
+      var lsKey = 'geo_' + key;
+      var cached = localStorage.getItem(lsKey);
       if (cached) {
-        const obj = JSON.parse(cached);
+        var obj = JSON.parse(cached);
         cityCache.set(key, obj);
         return obj;
       }
-      const url = "https://nominatim.openstreetmap.org/search?format=json&limit=1&q=" + encodeURIComponent(city);
-      const res = await fetch(url, { headers: { "Accept": "application/json" } });
+      var url = 'https://nominatim.openstreetmap.org/search?format=json&limit=1&q=' + encodeURIComponent(city);
+      var res = await fetch(url, { headers: { 'Accept': 'application/json' } });
       if (!res.ok) return null;
-      const arr = await res.json();
+      var arr = await res.json();
       if (Array.isArray(arr) && arr.length > 0) {
-        const lat = parseFloat(arr[0].lat);
-        const lon = parseFloat(arr[0].lon);
-        const obj = { lat: lat, lon: lon };
-        cityCache.set(key, obj);
-        try { localStorage.setItem(lsKey, JSON.stringify(obj)); } catch (_) {}
-        return obj;
+        var lat = parseFloat(arr[0].lat);
+        var lon = parseFloat(arr[0].lon);
+        var obj2 = { lat: lat, lon: lon };
+        cityCache.set(key, obj2);
+        try { localStorage.setItem(lsKey, JSON.stringify(obj2)); } catch (e) {}
+        return obj2;
       }
-    } catch (_) { /* ignore */ }
+    } catch (e) {}
     return null;
   }
 
   // 4) Fetch + normalize
   async function fetchRows() {
-    const res = await fetch(SHEET_API_URL, { cache: "no-store" });
-    if (!res.ok) throw new Error("Fetch failed: " + res.status);
-    const json = await res.json();
-    const rows = Array.isArray(json && json.data) ? json.data : json; // handle {data:[...]} or [...]
+    var res = await fetch(SHEET_API_URL, { cache: 'no-store' });
+    if (!res.ok) throw new Error('Fetch failed: ' + res.status);
+    var json = await res.json();
+    var rows = Array.isArray(json && json.data) ? json.data : json; // handle {data:[...]} or [...]
 
     // Detect field names from first row
     if (rows && rows.length > 0) {
-      const keys = Object.keys(rows[0] || {});
-      const hasDefault = keys.includes(DEFAULT_FIELDS.leiId) && keys.includes(DEFAULT_FIELDS.lat);
-      const hasAlt = keys.includes(ALT_FIELDS.leiId) || keys.includes(ALT_FIELDS.lat);
+      var keys = Object.keys(rows[0] || {});
+      var hasDefault = keys.indexOf(DEFAULT_FIELDS.leiId) !== -1 && keys.indexOf(DEFAULT_FIELDS.lat) !== -1;
+      var hasAlt = keys.indexOf(ALT_FIELDS.leiId) !== -1 || keys.indexOf(ALT_FIELDS.lat) !== -1;
       FIELD_MAP = hasDefault ? DEFAULT_FIELDS : (hasAlt ? ALT_FIELDS : DEFAULT_FIELDS);
     }
 
-    // Normalize
-    const normalized = rows
-      .map(function(r) {
+    var normalized = rows
+      .map(function (r) {
         var lat = parseFloat(r[FIELD_MAP.lat]);
         var lon = parseFloat(r[FIELD_MAP.lon]);
-        var leiId = (r[FIELD_MAP.leiId] || "").toString().trim();
-        var city = (r[FIELD_MAP.city] || "").toString().trim();
+        var leiId = (r[FIELD_MAP.leiId] || '').toString().trim();
+        var city = (r[FIELD_MAP.city] || '').toString().trim();
         return {
           timestamp: new Date(r[FIELD_MAP.timestamp]),
           leiId: leiId,
@@ -180,28 +169,28 @@ function leiColorByIndex(index, total) {
           lon: isFinite(lon) ? lon : null
         };
       })
-      .filter(function(d) { return d.leiId !== ""; })
-      .sort(function(a, b) { return a.timestamp - b.timestamp; });
+      .filter(function (d) { return d.leiId !== ''; })
+      .sort(function (a, b) { return a.timestamp - b.timestamp; });
 
-    // Geocode cities where lat/lon missing (sequential to be gentle on API)
-    for (let i = 0; i < normalized.length; i++) {
-      const d = normalized[i];
+    // Geocode cities where lat/lon missing (sequential)
+    for (var i = 0; i < normalized.length; i++) {
+      var d = normalized[i];
       if ((d.lat === null || d.lon === null) && d.city) {
-        const g = await geocodeCity(d.city);
+        var g = await geocodeCity(d.city);
         if (g) { d.lat = g.lat; d.lon = g.lon; }
-        // small delay to respect Nominatim usage
-        await new Promise(r => setTimeout(r, 500));
+        await new Promise(function(resolve){ setTimeout(resolve, 500); });
       }
     }
 
-    // Finally, keep only rows that have coordinates
-    return normalized.filter(function(d) { return d.lat !== null && d.lon !== null; });
+    // Keep only rows with coordinates
+    var withCoords = normalized.filter(function (d) { return d.lat !== null && d.lon !== null; });
+    return withCoords;
   }
 
-  // 5) Render
+  // 5) Render helpers
   function clearMap() {
     clusterGroup.clearLayers();
-    leiLayers.forEach(function(obj) {
+    leiLayers.forEach(function (obj) {
       if (obj.markers) { map.removeLayer(obj.markers); }
       if (obj.line) { map.removeLayer(obj.line); }
     });
@@ -209,63 +198,39 @@ function leiColorByIndex(index, total) {
   }
 
   function buildLegend(byLei, colorMap) {
-  var legend = document.getElementById("legend");
-  legend.innerHTML = "";
-  Array.from(byLei.keys()).sort().forEach(function(leiId) {
-    var color = colorMap.get(leiId) || '#888';
-    var item = document.createElement("div");
-    item.className = "legend-item";
-    item.setAttribute("data-lei-id", leiId);
-    var sw = document.createElement("span");
-    sw.className = "legend-swatch";
-    sw.style.background = color;
-    var lbl = document.createElement("span");
-    lbl.textContent = leiId;
-    item.appendChild(sw);
-    item.appendChild(lbl);
-    item.addEventListener("click", function() {
-      var sel = document.getElementById("leiFilter");
-      sel.value = (sel.value === leiId ? "__ALL__" : leiId);
-      applyFilter();
-      highlightSelection();
-    });
-    legend.appendChild(item);
-  });
-  highlightSelection();
-}
-);
+    var legend = document.getElementById('legend');
+    legend.innerHTML = '';
+    Array.from(byLei.keys()).sort().forEach(function (leiId) {
+      var color = colorMap.get(leiId) || '#888';
+      var item = document.createElement('div');
+      item.className = 'legend-item';
+      item.setAttribute('data-lei-id', leiId);
+      var sw = document.createElement('span');
+      sw.className = 'legend-swatch';
+      sw.style.background = color;
+      var lbl = document.createElement('span');
+      lbl.textContent = leiId;
+      item.appendChild(sw);
+      item.appendChild(lbl);
+      item.addEventListener('click', function () {
+        var sel = document.getElementById('leiFilter');
+        sel.value = (sel.value === leiId ? '__ALL__' : leiId);
+        applyFilter();
+        highlightSelection();
+      });
       legend.appendChild(item);
     });
     highlightSelection();
   }
 
   function highlightSelection() {
-  var sel = document.getElementById("leiFilter").value;
-  leiLayers.forEach(function(obj, leiId) {
-    var mainColor = obj.color; // use precomputed distinct color
-    var dimColor = "#b9b9b9";
-    var active = (sel === "__ALL__" || sel === leiId);
-    obj.line.setStyle({ color: active ? mainColor : dimColor, opacity: active ? 0.95 : 0.4 });
-    obj.markers.eachLayer(function(layer) {
-      if (layer.setStyle) {
-        layer.setStyle({
-          color: active ? mainColor : dimColor,
-          fillColor: active ? mainColor : dimColor,
-          fillOpacity: active ? 0.35 : 0.2,
-          opacity: active ? 1 : 0.6
-        });
-      }
-    });
-  });
-  var selVal = sel;
-  document.querySelectorAll('#legend .legend-item').forEach(function(el) {
-    var isActive = (selVal === "__ALL__" || el.getAttribute("data-lei-id") === selVal);
-    el.style.opacity = isActive ? "1" : "0.45";
-    el.style.borderColor = (!isActive && selVal !== "__ALL__") ? "#eee" : (isActive && selVal !== "__ALL__" ? "#999" : "#eee");
-  });
-}
-);
-      obj.markers.eachLayer(function(layer) {
+    var sel = document.getElementById('leiFilter').value;
+    leiLayers.forEach(function (obj, leiId) {
+      var mainColor = obj.color;
+      var dimColor = '#b9b9b9';
+      var active = (sel === '__ALL__' || sel === leiId);
+      obj.line.setStyle({ color: active ? mainColor : dimColor, opacity: active ? 0.95 : 0.4 });
+      obj.markers.eachLayer(function (layer) {
         if (layer.setStyle) {
           layer.setStyle({
             color: active ? mainColor : dimColor,
@@ -277,10 +242,11 @@ function leiColorByIndex(index, total) {
       });
     });
     var selVal = sel;
-    document.querySelectorAll('#legend .legend-item').forEach(function(el) {
-      var isActive = (selVal === "__ALL__" || el.getAttribute("data-lei-id") === selVal);
-      el.style.opacity = isActive ? "1" : "0.45";
-      el.style.borderColor = (!isActive && selVal !== "__ALL__") ? "#eee" : (isActive && selVal !== "__ALL__" ? "#999" : "#eee");
+    var items = document.querySelectorAll('#legend .legend-item');
+    Array.prototype.forEach.call(items, function (el) {
+      var isActive = (selVal === '__ALL__' || el.getAttribute('data-lei-id') === selVal);
+      el.style.opacity = isActive ? '1' : '0.45';
+      el.style.borderColor = (!isActive && selVal !== '__ALL__') ? '#eee' : (isActive && selVal !== '__ALL__' ? '#999' : '#eee');
     });
   }
 
@@ -288,40 +254,38 @@ function leiColorByIndex(index, total) {
     clearMap();
 
     var byLei = new Map();
-    data.forEach(function(d) {
+    data.forEach(function (d) {
       if (!byLei.has(d.leiId)) byLei.set(d.leiId, []);
       byLei.get(d.leiId).push(d);
     });
 
-    var leiFilter = document.getElementById("leiFilter");
+    var leiFilter = document.getElementById('leiFilter');
     var previous = leiFilter.value;
     var optionsHtml = '<option value="__ALL__">All Leis</option>';
-    Array.from(byLei.keys()).sort().forEach(function(id) {
-      optionsHtml += '<option value="' + id + '">' + id + '</option>';
-    });
-    leiFilter.innerHTML = optionsHtml;
-    if (Array.from(byLei.keys()).indexOf(previous) !== -1) { leiFilter.value = previous; }
-
-    // Build a distinct color map for all leis (stable order)
     var ids = Array.from(byLei.keys()).sort();
+    ids.forEach(function (id) { optionsHtml += '<option value="' + id + '">' + id + '</option>'; });
+    leiFilter.innerHTML = optionsHtml;
+    if (ids.indexOf(previous) !== -1) { leiFilter.value = previous; }
+
+    // Color map
     var colorMap = new Map();
-    ids.forEach(function(id, i){ colorMap.set(id, leiColorByIndex(i, ids.length)); });
+    ids.forEach(function (id, i) { colorMap.set(id, leiColorByIndex(i)); });
 
     buildLegend(byLei, colorMap);
 
     var allLatLngs = [];
 
-    byLei.forEach(function(rows, leiId) {
+    byLei.forEach(function (rows, leiId) {
       var color = colorMap.get(leiId) || '#2a7fff';
       var markerGroup = L.layerGroup();
       var path = [];
 
-      rows.forEach(function(d) {
+      rows.forEach(function (d) {
         var ll = [d.lat, d.lon];
         path.push(ll);
         allLatLngs.push(ll);
 
-        var prettyTime = isNaN(d.timestamp) ? "" : d.timestamp.toLocaleString();
+        var prettyTime = isNaN(d.timestamp) ? '' : d.timestamp.toLocaleString();
         var popupHtml = '<div class="popup">' +
           '<div><strong>' + leiId + '</strong>' + (d.city ? ' — ' + d.city : '') + '</div>' +
           '<small>' + prettyTime + '</small>' +
@@ -345,13 +309,6 @@ function leiColorByIndex(index, total) {
       leiLayers.set(leiId, { markers: markerGroup, line: line, color: color });
     });
 
-      var line = L.polyline(path, { color: color, weight: 3, opacity: 0.9 });
-      clusterGroup.addLayer(markerGroup);
-      line.addTo(map);
-
-      leiLayers.set(leiId, { markers: markerGroup, line: line, color: color });
-    });
-
     if (allLatLngs.length) {
       var bounds = L.latLngBounds(allLatLngs);
       map.fitBounds(bounds.pad(0.15));
@@ -359,9 +316,9 @@ function leiColorByIndex(index, total) {
   }
 
   function applyFilter() {
-    var pick = document.getElementById("leiFilter").value;
-    leiLayers.forEach(function(obj, leiId) {
-      var show = (pick === "__ALL__" || pick === leiId);
+    var pick = document.getElementById('leiFilter').value;
+    leiLayers.forEach(function (obj, leiId) {
+      var show = (pick === '__ALL__' || pick === leiId);
       if (show) {
         clusterGroup.addLayer(obj.markers);
         obj.line.addTo(map);
@@ -372,28 +329,30 @@ function leiColorByIndex(index, total) {
     });
   }
 
-  document.getElementById("leiFilter").addEventListener("change", function() {
+  document.getElementById('leiFilter').addEventListener('change', function () {
     applyFilter();
     highlightSelection();
   });
-  document.getElementById("refreshBtn").addEventListener("click", init);
+  document.getElementById('refreshBtn').addEventListener('click', init);
 
   async function init() {
     try {
-      const data = await fetchRows();
+      var data = await fetchRows();
       render(data);
       applyFilter();
       highlightSelection();
     } catch (err) {
       console.error(err);
-      alert("Failed to load data. Check your endpoint and try again.");
+      alert('Failed to load data. Check your endpoint and try again.');
     }
   }
 
   // First load
   init();
   // Auto-refresh every 2 minutes
-  setInterval(function() { init(); }, 2 * 60 * 1000);
+  setInterval(function () { init(); }, 2 * 60 * 1000);
+
+})();
 </script>
 </body>
 </html>
