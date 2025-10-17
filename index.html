@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <title>TAG Lei Tracker - Live Map</title>
+  <title>TAG Lei Tracker by H-PEP: Spark Aloha!</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
 
   <!-- Favicon to prevent 404 -->
@@ -50,11 +50,11 @@
 <body>
 <div id="app">
   <header>
-    <h1>TAG Lei Tracker - Live Map</h1>
+    <h1>TAG Lei Tracker by H-PEP: Spark Aloha!</h1>
 
     <label for="leiFilter"><strong>Filter by Lei ID:</strong></label>
     <select id="leiFilter">
-      <option value="__ALL__">All Leis</option>
+      <option value="__ALL__">All Lei</option>
     </select>
 
     <button id="refreshBtn" title="Reload data">Refresh</button>
@@ -200,7 +200,14 @@
   function buildLegend(byLei, colorMap) {
     var legend = document.getElementById('legend');
     legend.innerHTML = '';
-    Array.from(byLei.keys()).sort().forEach(function (leiId) {
+    Array.from(byLei.keys()).sort(function(a,b){
+      var na = parseFloat(a), nb = parseFloat(b);
+      var aNum = isFinite(na), bNum = isFinite(nb);
+      if (aNum && bNum) return na - nb;
+      var ma = String(a).match(/\d+/), mb = String(b).match(/\d+/);
+      if (ma && mb) return parseInt(ma[0],10) - parseInt(mb[0],10);
+      return String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: 'base' });
+    }).forEach(function (leiId) {
       var color = colorMap.get(leiId) || '#888';
       var item = document.createElement('div');
       item.className = 'legend-item';
@@ -261,8 +268,15 @@
 
     var leiFilter = document.getElementById('leiFilter');
     var previous = leiFilter.value;
-    var optionsHtml = '<option value="__ALL__">All Leis</option>';
-    var ids = Array.from(byLei.keys()).sort();
+    var optionsHtml = '<option value="__ALL__">All Lei</option>';
+    var ids = Array.from(byLei.keys()).sort(function(a,b){
+      var na = parseFloat(a), nb = parseFloat(b);
+      var aNum = isFinite(na), bNum = isFinite(nb);
+      if (aNum && bNum) return na - nb;
+      var ma = String(a).match(/\d+/), mb = String(b).match(/\d+/);
+      if (ma && mb) return parseInt(ma[0],10) - parseInt(mb[0],10);
+      return String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: 'base' });
+    });
     ids.forEach(function (id) { optionsHtml += '<option value="' + id + '">' + id + '</option>'; });
     leiFilter.innerHTML = optionsHtml;
     if (ids.indexOf(previous) !== -1) { leiFilter.value = previous; }
