@@ -324,6 +324,57 @@
     });
   }
 
+  // Build route segments that cross the International Date Line correctly.
+  // This prevents a Hawaiʻi → Japan trip from drawing east across the entire world.
+  function buildDateLineSafeSegments(points) {
+    if (!points || points.length === 0) return [];
+
+    var segments = [[points[0]]];
+
+    for (var i = 1; i < points.length; i++) {
+      var previous = points[i - 1];
+      var current = points[i];
+      var previousLat = previous[0];
+      var previousLon = previous[1];
+      var currentLat = current[0];
+      var currentLon = current[1];
+      var delta = currentLon - previousLon;
+      var activeSegment = segments[segments.length - 1];
+
+      if (Math.abs(delta) <= 180) {
+        activeSegment.push(current);
+        continue;
+      }
+
+      var adjustedCurrentLon;
+      var crossingLon;
+      var oppositeLon;
+
+      if (delta > 180) {
+        // Example: Hawaiʻi (-157) → Japan (+139).
+        // Treat Japan as -221 so the route travels west across -180.
+        adjustedCurrentLon = currentLon - 360;
+        crossingLon = -180;
+        oppositeLon = 180;
+      } else {
+        // Example: Japan (+139) → Hawaiʻi (-157).
+        // Treat Hawaiʻi as +203 so the route travels east across +180.
+        adjustedCurrentLon = currentLon + 360;
+        crossingLon = 180;
+        oppositeLon = -180;
+      }
+
+      var denominator = adjustedCurrentLon - previousLon;
+      var t = denominator === 0 ? 0.5 : (crossingLon - previousLon) / denominator;
+      var crossingLat = previousLat + t * (currentLat - previousLat);
+
+      activeSegment.push([crossingLat, crossingLon]);
+      segments.push([[crossingLat, oppositeLon], current]);
+    }
+
+    return segments;
+  }
+
   function clearMapData() {
     clusterGroup.clearLayers();
 
@@ -418,7 +469,8 @@
         markerGroup.addLayer(marker);
       });
 
-      var line = L.polyline(path, {
+      var routeSegments = buildDateLineSafeSegments(path);
+      var line = L.polyline(routeSegments, {
         color: color,
         weight: 3,
         opacity: 0.9
