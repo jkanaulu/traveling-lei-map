@@ -271,6 +271,33 @@
     }
   }
 
+  function readCachedCity(city) {
+    if (!city) return null;
+
+    var key = cacheKeyForCity(city);
+
+    if (cityCache.has(key)) {
+      return cityCache.get(key);
+    }
+
+    var storageKey = "tagLeiGeo_" + key;
+
+    try {
+      var saved = localStorage.getItem(storageKey);
+      if (saved) {
+        var parsed = JSON.parse(saved);
+        if (parsed && isFinite(parsed.lat) && isFinite(parsed.lon)) {
+          cityCache.set(key, parsed);
+          return parsed;
+        }
+      }
+    } catch (e) {
+      // Cache is optional.
+    }
+
+    return null;
+  }
+
   async function fetchRows() {
     var response = await fetch(SHEET_API_URL, {
       cache: "no-store"
@@ -287,92 +314,105 @@
       throw new Error("The Apps Script endpoint did not return an array of rows.");
     }
 
-    var normalized = rows.map(function (row, rowIndex) {
+    return rows.map(function (row, rowIndex) {
       var latitude = parseFloat(row[FIELD_MAP.lat]);
       var longitude = parseFloat(row[FIELD_MAP.lon]);
       var timestamp = new Date(row[FIELD_MAP.timestamp]);
       var timestampMs = timestamp.getTime();
+      var city = String(row[FIELD_MAP.city] || "").trim();
+      var cached = null;
+
+      if ((!isFinite(latitude) || !isFinite(longitude)) && city) {
+        cached = readCachedCity(city);
+      }
 
       return {
         timestamp: timestamp,
         timestampMs: isNaN(timestampMs) ? null : timestampMs,
         sourceOrder: rowIndex,
         leiId: String(row[FIELD_MAP.leiId] || "").trim(),
-        city: String(row[FIELD_MAP.city] || "").trim(),
-        lat: isFinite(latitude) ? latitude : null,
-        lon: isFinite(longitude) ? longitude : null
+        city: city,
+        lat: isFinite(latitude) ? latitude : (cached ? cached.lat : null),
+        lon: isFinite(longitude) ? longitude : (cached ? cached.lon : null)
       };
     }).filter(function (row) {
       return row.leiId !== "";
     });
+  }
 
-    // If GPS is missing, place the point at the center of the required city.
-    for (var i = 0; i < normalized.length; i++) {
-      var item = normalized[i];
-
-      if ((item.lat === null || item.lon === null) && item.city) {
-        var geocoded = await geocodeCity(item.city);
-        if (geocoded) {
-          item.lat = geocoded.lat;
-          item.lon = geocoded.lon;
-        }
-      }
-    }
-
-    return normalized.filter(function (row) {
+  function rowsWithCoordinates(rows) {
+    return rows.filter(function (row) {
       return row.lat !== null && row.lon !== null;
     });
   }
 
-  // Build route segments that cross the International Date Line correctly.
-  // This prevents a Hawaiʻi → Japan trip from drawing east across the entire world.
-  function buildDateLineSafeSegments(points) {
+  var loadGeneration = 0;
+
+  async function geocodeMissingCitiesInBackground(rows, generation) {
+    // Group all missing rows by city so each unique city is looked up only once.
+    var pendingByCity = new Map();
+
+    rows.forEach(function (row) {
+      if (row.lat !== null && row.lon !== null) return;
+      if (!row.city) return;
+
+      var key = cacheKeyForCity(row.city);
+      if (!pendingByCity.has(key)) {
+        pendingByCity.set(key, {
+          city: row.city,
+          rows: []
+        });
+      }
+      pendingByCity.get(key).rows.push(row);
+    });
+
+    var pendingCities = Array.from(pendingByCity.values());
+
+    for (var i = 0; i < pendingCities.length; i++) {
+      // A newer refresh supersedes this background pass.
+      if (generation !== loadGeneration) return;
+
+      var group = pendingCities[i];
+      var geocoded = await geocodeCity(group.city);
+
+      if (generation !== loadGeneration) return;
+
+      if (geocoded) {
+        group.rows.forEach(function (row) {
+          row.lat = geocoded.lat;
+          row.lon = geocoded.lon;
+        });
+
+        // Repaint incrementally without changing the viewer's current zoom.
+        render(rowsWithCoordinates(rows), false);
+      }
+    }
+  }
+
+  // Build one continuous route using the shortest longitude jump between stops.
+  // Longitudes are allowed to go outside -180..180 so Leaflet draws the route
+  // into the neighboring world copy instead of cutting it at the Date Line.
+  // Example: Hawaiʻi (-157) → Japan (+139) becomes -157 → -221,
+  // which draws west across the Pacific and still lands on Japan's wrapped map copy.
+  function buildContinuousRoute(points) {
     if (!points || points.length === 0) return [];
 
-    var segments = [[points[0]]];
+    var route = [[points[0][0], points[0][1]]];
+    var previousLon = points[0][1];
 
     for (var i = 1; i < points.length; i++) {
-      var previous = points[i - 1];
-      var current = points[i];
-      var previousLat = previous[0];
-      var previousLon = previous[1];
-      var currentLat = current[0];
-      var currentLon = current[1];
-      var delta = currentLon - previousLon;
-      var activeSegment = segments[segments.length - 1];
+      var lat = points[i][0];
+      var lon = points[i][1];
 
-      if (Math.abs(delta) <= 180) {
-        activeSegment.push(current);
-        continue;
-      }
+      // Pick the equivalent longitude (lon ± 360) nearest to the previous stop.
+      while (lon - previousLon > 180) lon -= 360;
+      while (lon - previousLon < -180) lon += 360;
 
-      var adjustedCurrentLon;
-      var crossingLon;
-      var oppositeLon;
-
-      if (delta > 180) {
-        // Example: Hawaiʻi (-157) → Japan (+139).
-        // Treat Japan as -221 so the route travels west across -180.
-        adjustedCurrentLon = currentLon - 360;
-        crossingLon = -180;
-        oppositeLon = 180;
-      } else {
-        // Example: Japan (+139) → Hawaiʻi (-157).
-        // Treat Hawaiʻi as +203 so the route travels east across +180.
-        adjustedCurrentLon = currentLon + 360;
-        crossingLon = 180;
-        oppositeLon = -180;
-      }
-
-      var denominator = adjustedCurrentLon - previousLon;
-      var t = denominator === 0 ? 0.5 : (crossingLon - previousLon) / denominator;
-      var crossingLat = previousLat + t * (currentLat - previousLat);
-
-      activeSegment.push([crossingLat, crossingLon]);
-      segments.push([[crossingLat, oppositeLon], current]);
+      route.push([lat, lon]);
+      previousLon = lon;
     }
 
-    return segments;
+    return route;
   }
 
   function clearMapData() {
@@ -393,7 +433,7 @@
     applyFilter(true);
   }
 
-  function render(data) {
+  function render(data, fitMap) {
     clearMapData();
 
     var byLei = new Map();
@@ -440,11 +480,18 @@
 
       var color = colorForLei(leiId);
       var markerGroup = L.layerGroup();
-      var path = [];
 
-      rows.forEach(function (item) {
-        var latLng = [item.lat, item.lon];
-        path.push(latLng);
+      // First build the timestamp-ordered raw path, then unwrap longitudes so
+      // Date Line crossings use the neighboring world copy continuously.
+      var rawPath = rows.map(function (item) {
+        return [item.lat, item.lon];
+      });
+      var path = buildContinuousRoute(rawPath);
+
+      rows.forEach(function (item, itemIndex) {
+        // Use the adjusted display longitude for markers too, so the marker
+        // and route line appear together on the same wrapped copy of the map.
+        var latLng = path[itemIndex];
         allPoints.push(latLng);
 
         var prettyTime = isNaN(item.timestamp) ? "" : item.timestamp.toLocaleString();
@@ -469,8 +516,7 @@
         markerGroup.addLayer(marker);
       });
 
-      var routeSegments = buildDateLineSafeSegments(path);
-      var line = L.polyline(routeSegments, {
+      var line = L.polyline(path, {
         color: color,
         weight: 3,
         opacity: 0.9
@@ -493,7 +539,7 @@
 
     applyFilter(false);
 
-    if (select.value === "__ALL__" && allPoints.length > 0) {
+    if (fitMap !== false && select.value === "__ALL__" && allPoints.length > 0) {
       map.fitBounds(L.latLngBounds(allPoints).pad(0.12));
     }
   }
@@ -550,9 +596,21 @@
   }
 
   async function init() {
+    var generation = ++loadGeneration;
+
     try {
-      var data = await fetchRows();
-      render(data);
+      var rows = await fetchRows();
+
+      if (generation !== loadGeneration) return;
+
+      // Draw GPS points and previously cached city locations immediately.
+      // Do not wait for new city lookups before showing the map.
+      render(rowsWithCoordinates(rows), true);
+
+      // Resolve uncached city-only responses progressively in the background.
+      geocodeMissingCitiesInBackground(rows, generation).catch(function (error) {
+        console.warn("Some city locations could not be loaded:", error);
+      });
     } catch (error) {
       console.error(error);
       alert("Failed to load the TAG Lei map data. Check the browser console for details.");
