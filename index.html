@@ -298,16 +298,25 @@
     return null;
   }
 
-  async function fetchRows() {
-    var response = await fetch(SHEET_API_URL, {
+  async function loadRawRows() {
+    // Simple GET request. This is the same approach that worked reliably
+    // with the Google Apps Script Web App on GitHub Pages.
+    var separator = SHEET_API_URL.indexOf("?") === -1 ? "?" : "&";
+    var url = SHEET_API_URL + separator + "_=" + Date.now();
+
+    var response = await fetch(url, {
       cache: "no-store"
     });
 
     if (!response.ok) {
-      throw new Error("Data request failed: " + response.status);
+      throw new Error("Data request failed: HTTP " + response.status);
     }
 
-    var json = await response.json();
+    return await response.json();
+  }
+
+  async function fetchRows() {
+    var json = await loadRawRows();
     var rows = Array.isArray(json && json.data) ? json.data : json;
 
     if (!Array.isArray(rows)) {
