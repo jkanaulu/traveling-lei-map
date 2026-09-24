@@ -5,26 +5,67 @@
   <title>TAG Lei Tracker by H-PEP: Spark Aloha!</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
 
-  <!-- Favicon to prevent 404 -->
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E🌺%3C/text%3E%3C/svg%3E" />
 
-  <!-- Leaflet CSS/JS -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
-  <!-- Marker clustering -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css" />
   <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css" />
   <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
 
   <style>
-    html, body { height: 100%; margin: 0; }
+    html, body {
+      height: 100%;
+      margin: 0;
+    }
 
-    /* Full-height layout */
     #app {
       display: grid;
       grid-template-rows: auto 1fr;
       height: 100vh;
+    }
+
+    header {
+      padding: 10px 12px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+      border-bottom: 1px solid #e5e5e5;
+      background: #fff;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      z-index: 1000;
+    }
+
+    header h1 {
+      margin: 0 12px 0 0;
+      font-size: 18px;
+      line-height: 1.25;
+    }
+
+    .controls {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    label {
+      font-size: 14px;
+    }
+
+    select,
+    button {
+      padding: 7px 10px;
+      font-size: 14px;
+      border: 1px solid #bbb;
+      border-radius: 6px;
+      background: #fff;
+    }
+
+    button {
+      cursor: pointer;
     }
 
     #map {
@@ -33,18 +74,30 @@
       min-height: 70vh;
     }
 
-    header {
-      padding: 10px 12px; gap: 12px; display: flex; flex-wrap: wrap;
-      align-items: center; border-bottom: 1px solid #eee; font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+    .popup small {
+      color: #555;
     }
-    header h1 { font-size: 18px; margin: 0 8px 0 0; }
-    label { font-size: 14px; }
-    select, button { padding: 6px 10px; font-size: 14px; }
 
-    .legend { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
-    .legend-item { display:flex; align-items:center; gap:6px; padding:4px 6px; border:1px solid #eee; border-radius:6px; cursor:pointer; user-select:none; }
-    .legend-swatch { width:14px; height:14px; border-radius:3px; border:1px solid rgba(0,0,0,0.2); }
-    .popup small { color: #555; }
+    @media (max-width: 640px) {
+      header {
+        align-items: flex-start;
+      }
+
+      header h1 {
+        width: 100%;
+        font-size: 16px;
+        margin-right: 0;
+      }
+
+      .controls {
+        width: 100%;
+      }
+
+      select {
+        flex: 1;
+        min-width: 120px;
+      }
+    }
   </style>
 </head>
 <body>
@@ -52,320 +105,422 @@
   <header>
     <h1>TAG Lei Tracker by H-PEP: Spark Aloha!</h1>
 
-    <label for="leiFilter"><strong>Filter by Lei ID:</strong></label>
-    <select id="leiFilter">
-      <option value="__ALL__">All Lei</option>
-    </select>
-
-    <button id="refreshBtn" title="Reload data">Refresh</button>
-
-    <div id="legend" class="legend" aria-label="Lei color legend"></div>
+    <div class="controls">
+      <label for="leiFilter"><strong>Filter by Lei ID:</strong></label>
+      <select id="leiFilter">
+        <option value="__ALL__">All Lei</option>
+      </select>
+      <button id="refreshBtn" type="button" title="Reload map data">Refresh</button>
+    </div>
   </header>
 
   <div id="map"></div>
 </div>
 
 <script>
-(function(){
-  'use strict';
+(function () {
+  "use strict";
 
-  // 1) Your Apps Script Web App endpoint (public /exec URL)
   var SHEET_API_URL = "https://script.google.com/macros/s/AKfycby51HsMDb37R0vZZmW9Eirx80I6blvegVPdyBs7CqVPOE1iQVsRKPe3KpM0tfSuRKS5lA/exec";
 
-  // 2) Field name sets (auto-detect)
-  var DEFAULT_FIELDS = {
+  var FIELD_MAP = {
     timestamp: "Timestamp",
     leiId: "Lei ID",
     city: "City / Town and Country",
     lat: "Latitude",
     lon: "Longitude"
   };
-  var ALT_FIELDS = {
-    timestamp: "Timestamp",
-    leiId: "Unique Lei ID",
-    city: "Your current city",
-    lat: "Latitude (optional to respond)",
-    lon: "Longitude  (optional to respond)"
-  };
-  var FIELD_MAP = DEFAULT_FIELDS; // will be reassigned after first fetch if needed
 
-  // 3) Map bootstrap
-  var map = L.map('map', { worldCopyJump: true }).setView([20.8, -156.3], 3);
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    attribution: '© OpenStreetMap contributors'
-  }).addTo(map);
-  setTimeout(function(){ map.invalidateSize(); }, 0);
-  window.addEventListener('resize', function(){ map.invalidateSize(); });
+  var map = L.map("map", {
+    worldCopyJump: true,
+    minZoom: 2
+  }).setView([20.8, -156.3], 3);
+
+  // Esri World Street Map: English-oriented global place labels.
+  L.tileLayer(
+    "https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}",
+    {
+      attribution: "Tiles &copy; Esri",
+      maxZoom: 19
+    }
+  ).addTo(map);
+
+  setTimeout(function () {
+    map.invalidateSize();
+  }, 0);
+
+  window.addEventListener("resize", function () {
+    map.invalidateSize();
+  });
 
   var clusterGroup = L.markerClusterGroup();
   map.addLayer(clusterGroup);
 
-  // Store layers per Lei ID
-  var leiLayers = new Map(); // leiId -> { markers, line, color }
+  var leiLayers = new Map();
+  var cityCache = new Map();
+  var lastGeocodeRequestAt = 0;
 
-  // Distinct color palette
-  function leiColorByIndex(index) {
-    var hue = (index * 137.508) % 360; // golden-angle spacing
-    return 'hsl(' + hue + ', 75%, 45%)';
+  function extractLeiNumber(value) {
+    var match = String(value).match(/\d+(?:\.\d+)?/);
+    return match ? parseFloat(match[0]) : null;
   }
 
-  // --- Nominatim geocoding (city → lat/lon) with simple caching ---
-  var cityCache = new Map();
-  function getCacheKey(city) { return city.trim().toLowerCase(); }
+  function compareLeiIds(a, b) {
+    var aNumber = extractLeiNumber(a);
+    var bNumber = extractLeiNumber(b);
+
+    if (aNumber !== null && bNumber !== null && aNumber !== bNumber) {
+      return aNumber - bNumber;
+    }
+
+    return String(a).localeCompare(String(b), undefined, {
+      numeric: true,
+      sensitivity: "base"
+    });
+  }
+
+  // Stable color based on the Lei ID itself, so colors do not change when new lei are added.
+  function colorForLei(leiId) {
+    var number = extractLeiNumber(leiId);
+
+    if (number === null) {
+      var hash = 0;
+      var text = String(leiId);
+      for (var i = 0; i < text.length; i++) {
+        hash = text.charCodeAt(i) + ((hash << 5) - hash);
+      }
+      number = Math.abs(hash);
+    }
+
+    var hue = (number * 137.508) % 360;
+    return "hsl(" + hue + ", 75%, 43%)";
+  }
+
+  function cacheKeyForCity(city) {
+    return String(city).trim().toLowerCase();
+  }
+
+  function sleep(ms) {
+    return new Promise(function (resolve) {
+      setTimeout(resolve, ms);
+    });
+  }
+
   async function geocodeCity(city) {
     if (!city) return null;
-    var key = getCacheKey(city);
-    if (cityCache.has(key)) return cityCache.get(key);
+
+    var key = cacheKeyForCity(city);
+
+    if (cityCache.has(key)) {
+      return cityCache.get(key);
+    }
+
+    var storageKey = "tagLeiGeo_" + key;
+
     try {
-      var lsKey = 'geo_' + key;
-      var cached = localStorage.getItem(lsKey);
-      if (cached) {
-        var obj = JSON.parse(cached);
-        cityCache.set(key, obj);
-        return obj;
+      var saved = localStorage.getItem(storageKey);
+      if (saved) {
+        var parsed = JSON.parse(saved);
+        cityCache.set(key, parsed);
+        return parsed;
       }
-      var url = 'https://nominatim.openstreetmap.org/search?format=json&limit=1&q=' + encodeURIComponent(city);
-      var res = await fetch(url, { headers: { 'Accept': 'application/json' } });
-      if (!res.ok) return null;
-      var arr = await res.json();
-      if (Array.isArray(arr) && arr.length > 0) {
-        var lat = parseFloat(arr[0].lat);
-        var lon = parseFloat(arr[0].lon);
-        var obj2 = { lat: lat, lon: lon };
-        cityCache.set(key, obj2);
-        try { localStorage.setItem(lsKey, JSON.stringify(obj2)); } catch (e) {}
-        return obj2;
+    } catch (e) {
+      // Continue without localStorage if the browser blocks it.
+    }
+
+    // Public Nominatim usage should stay at or below roughly one request per second.
+    var elapsed = Date.now() - lastGeocodeRequestAt;
+    if (elapsed < 1100) {
+      await sleep(1100 - elapsed);
+    }
+
+    var url = "https://nominatim.openstreetmap.org/search?format=json&limit=1&accept-language=en&q=" + encodeURIComponent(city);
+
+    try {
+      lastGeocodeRequestAt = Date.now();
+      var response = await fetch(url, {
+        headers: {
+          "Accept": "application/json"
+        }
+      });
+
+      if (!response.ok) return null;
+
+      var results = await response.json();
+      if (!Array.isArray(results) || results.length === 0) return null;
+
+      var location = {
+        lat: parseFloat(results[0].lat),
+        lon: parseFloat(results[0].lon)
+      };
+
+      if (!isFinite(location.lat) || !isFinite(location.lon)) return null;
+
+      cityCache.set(key, location);
+
+      try {
+        localStorage.setItem(storageKey, JSON.stringify(location));
+      } catch (e) {
+        // Cache is optional.
       }
-    } catch (e) {}
-    return null;
+
+      return location;
+    } catch (e) {
+      console.warn("Could not geocode city:", city, e);
+      return null;
+    }
   }
 
-  // 4) Fetch + normalize
   async function fetchRows() {
-    var res = await fetch(SHEET_API_URL, { cache: 'no-store' });
-    if (!res.ok) throw new Error('Fetch failed: ' + res.status);
-    var json = await res.json();
-    var rows = Array.isArray(json && json.data) ? json.data : json; // handle {data:[...]} or [...]
+    var response = await fetch(SHEET_API_URL, {
+      cache: "no-store"
+    });
 
-    // Detect field names from first row
-    if (rows && rows.length > 0) {
-      var keys = Object.keys(rows[0] || {});
-      var hasDefault = keys.indexOf(DEFAULT_FIELDS.leiId) !== -1 && keys.indexOf(DEFAULT_FIELDS.lat) !== -1;
-      var hasAlt = keys.indexOf(ALT_FIELDS.leiId) !== -1 || keys.indexOf(ALT_FIELDS.lat) !== -1;
-      FIELD_MAP = hasDefault ? DEFAULT_FIELDS : (hasAlt ? ALT_FIELDS : DEFAULT_FIELDS);
+    if (!response.ok) {
+      throw new Error("Data request failed: " + response.status);
     }
 
-    var normalized = rows
-      .map(function (r) {
-        var lat = parseFloat(r[FIELD_MAP.lat]);
-        var lon = parseFloat(r[FIELD_MAP.lon]);
-        var leiId = (r[FIELD_MAP.leiId] || '').toString().trim();
-        var city = (r[FIELD_MAP.city] || '').toString().trim();
-        return {
-          timestamp: new Date(r[FIELD_MAP.timestamp]),
-          leiId: leiId,
-          city: city,
-          lat: isFinite(lat) ? lat : null,
-          lon: isFinite(lon) ? lon : null
-        };
-      })
-      .filter(function (d) { return d.leiId !== ''; })
-      .sort(function (a, b) { return a.timestamp - b.timestamp; });
+    var json = await response.json();
+    var rows = Array.isArray(json && json.data) ? json.data : json;
 
-    // Geocode cities where lat/lon missing (sequential)
+    if (!Array.isArray(rows)) {
+      throw new Error("The Apps Script endpoint did not return an array of rows.");
+    }
+
+    var normalized = rows.map(function (row, rowIndex) {
+      var latitude = parseFloat(row[FIELD_MAP.lat]);
+      var longitude = parseFloat(row[FIELD_MAP.lon]);
+      var timestamp = new Date(row[FIELD_MAP.timestamp]);
+      var timestampMs = timestamp.getTime();
+
+      return {
+        timestamp: timestamp,
+        timestampMs: isNaN(timestampMs) ? null : timestampMs,
+        sourceOrder: rowIndex,
+        leiId: String(row[FIELD_MAP.leiId] || "").trim(),
+        city: String(row[FIELD_MAP.city] || "").trim(),
+        lat: isFinite(latitude) ? latitude : null,
+        lon: isFinite(longitude) ? longitude : null
+      };
+    }).filter(function (row) {
+      return row.leiId !== "";
+    });
+
+    // If GPS is missing, place the point at the center of the required city.
     for (var i = 0; i < normalized.length; i++) {
-      var d = normalized[i];
-      if ((d.lat === null || d.lon === null) && d.city) {
-        var g = await geocodeCity(d.city);
-        if (g) { d.lat = g.lat; d.lon = g.lon; }
-        await new Promise(function(resolve){ setTimeout(resolve, 500); });
+      var item = normalized[i];
+
+      if ((item.lat === null || item.lon === null) && item.city) {
+        var geocoded = await geocodeCity(item.city);
+        if (geocoded) {
+          item.lat = geocoded.lat;
+          item.lon = geocoded.lon;
+        }
       }
     }
 
-    // Keep only rows with coordinates
-    var withCoords = normalized.filter(function (d) { return d.lat !== null && d.lon !== null; });
-    return withCoords;
+    return normalized.filter(function (row) {
+      return row.lat !== null && row.lon !== null;
+    });
   }
 
-  // 5) Render helpers
-  function clearMap() {
+  function clearMapData() {
     clusterGroup.clearLayers();
-    leiLayers.forEach(function (obj) {
-      if (obj.markers) { map.removeLayer(obj.markers); }
-      if (obj.line) { map.removeLayer(obj.line); }
+
+    leiLayers.forEach(function (layerSet) {
+      if (layerSet.line && map.hasLayer(layerSet.line)) {
+        map.removeLayer(layerSet.line);
+      }
     });
+
     leiLayers.clear();
   }
 
-  function buildLegend(byLei, colorMap) {
-    var legend = document.getElementById('legend');
-    legend.innerHTML = '';
-    Array.from(byLei.keys()).sort(function(a,b){
-      var na = parseFloat(a), nb = parseFloat(b);
-      var aNum = isFinite(na), bNum = isFinite(nb);
-      if (aNum && bNum) return na - nb;
-      var ma = String(a).match(/\d+/), mb = String(b).match(/\d+/);
-      if (ma && mb) return parseInt(ma[0],10) - parseInt(mb[0],10);
-      return String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: 'base' });
-    }).forEach(function (leiId) {
-      var color = colorMap.get(leiId) || '#888';
-      var item = document.createElement('div');
-      item.className = 'legend-item';
-      item.setAttribute('data-lei-id', leiId);
-      var sw = document.createElement('span');
-      sw.className = 'legend-swatch';
-      sw.style.background = color;
-      var lbl = document.createElement('span');
-      lbl.textContent = leiId;
-      item.appendChild(sw);
-      item.appendChild(lbl);
-      item.addEventListener('click', function () {
-        var sel = document.getElementById('leiFilter');
-        sel.value = (sel.value === leiId ? '__ALL__' : leiId);
-        applyFilter();
-        highlightSelection();
-      });
-      legend.appendChild(item);
-    });
-    highlightSelection();
-  }
-
-  function highlightSelection() {
-    var sel = document.getElementById('leiFilter').value;
-    leiLayers.forEach(function (obj, leiId) {
-      var mainColor = obj.color;
-      var dimColor = '#b9b9b9';
-      var active = (sel === '__ALL__' || sel === leiId);
-      obj.line.setStyle({ color: active ? mainColor : dimColor, opacity: active ? 0.95 : 0.4 });
-      obj.markers.eachLayer(function (layer) {
-        if (layer.setStyle) {
-          layer.setStyle({
-            color: active ? mainColor : dimColor,
-            fillColor: active ? mainColor : dimColor,
-            fillOpacity: active ? 0.35 : 0.2,
-            opacity: active ? 1 : 0.6
-          });
-        }
-      });
-    });
-    var selVal = sel;
-    var items = document.querySelectorAll('#legend .legend-item');
-    Array.prototype.forEach.call(items, function (el) {
-      var isActive = (selVal === '__ALL__' || el.getAttribute('data-lei-id') === selVal);
-      el.style.opacity = isActive ? '1' : '0.45';
-      el.style.borderColor = (!isActive && selVal !== '__ALL__') ? '#eee' : (isActive && selVal !== '__ALL__' ? '#999' : '#eee');
-    });
+  function selectLei(leiId) {
+    var select = document.getElementById("leiFilter");
+    select.value = leiId;
+    applyFilter(true);
   }
 
   function render(data) {
-    clearMap();
+    clearMapData();
 
     var byLei = new Map();
-    data.forEach(function (d) {
-      if (!byLei.has(d.leiId)) byLei.set(d.leiId, []);
-      byLei.get(d.leiId).push(d);
+
+    data.forEach(function (item) {
+      if (!byLei.has(item.leiId)) {
+        byLei.set(item.leiId, []);
+      }
+      byLei.get(item.leiId).push(item);
     });
 
-    var leiFilter = document.getElementById('leiFilter');
-    var previous = leiFilter.value;
+    var ids = Array.from(byLei.keys()).sort(compareLeiIds);
+    var select = document.getElementById("leiFilter");
+    var previousSelection = select.value;
+
     var optionsHtml = '<option value="__ALL__">All Lei</option>';
-    var ids = Array.from(byLei.keys()).sort(function(a,b){
-      var na = parseFloat(a), nb = parseFloat(b);
-      var aNum = isFinite(na), bNum = isFinite(nb);
-      if (aNum && bNum) return na - nb;
-      var ma = String(a).match(/\d+/), mb = String(b).match(/\d+/);
-      if (ma && mb) return parseInt(ma[0],10) - parseInt(mb[0],10);
-      return String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: 'base' });
+    ids.forEach(function (id) {
+      optionsHtml += '<option value="' + escapeHtml(id) + '">' + escapeHtml(id) + '</option>';
     });
-    ids.forEach(function (id) { optionsHtml += '<option value="' + id + '">' + id + '</option>'; });
-    leiFilter.innerHTML = optionsHtml;
-    if (ids.indexOf(previous) !== -1) { leiFilter.value = previous; }
+    select.innerHTML = optionsHtml;
 
-    // Color map
-    var colorMap = new Map();
-    ids.forEach(function (id, i) { colorMap.set(id, leiColorByIndex(i)); });
+    if (ids.indexOf(previousSelection) !== -1) {
+      select.value = previousSelection;
+    } else {
+      select.value = "__ALL__";
+    }
 
-    buildLegend(byLei, colorMap);
+    var allPoints = [];
 
-    var allLatLngs = [];
+    ids.forEach(function (leiId) {
+      var rows = byLei.get(leiId);
 
-    byLei.forEach(function (rows, leiId) {
-      var color = colorMap.get(leiId) || '#2a7fff';
+      // Route order is determined by the Form Timestamp for this lei.
+      // Original response order is only used as a tie-breaker when two timestamps match.
+      rows.sort(function (a, b) {
+        if (a.timestampMs === null && b.timestampMs === null) {
+          return a.sourceOrder - b.sourceOrder;
+        }
+        if (a.timestampMs === null) return 1;
+        if (b.timestampMs === null) return -1;
+        if (a.timestampMs !== b.timestampMs) return a.timestampMs - b.timestampMs;
+        return a.sourceOrder - b.sourceOrder;
+      });
+
+      var color = colorForLei(leiId);
       var markerGroup = L.layerGroup();
       var path = [];
 
-      rows.forEach(function (d) {
-        var ll = [d.lat, d.lon];
-        path.push(ll);
-        allLatLngs.push(ll);
+      rows.forEach(function (item) {
+        var latLng = [item.lat, item.lon];
+        path.push(latLng);
+        allPoints.push(latLng);
 
-        var prettyTime = isNaN(d.timestamp) ? '' : d.timestamp.toLocaleString();
+        var prettyTime = isNaN(item.timestamp) ? "" : item.timestamp.toLocaleString();
         var popupHtml = '<div class="popup">' +
-          '<div><strong>' + leiId + '</strong>' + (d.city ? ' — ' + d.city : '') + '</div>' +
-          '<small>' + prettyTime + '</small>' +
+          '<div><strong>Lei ' + escapeHtml(item.leiId) + '</strong>' +
+          (item.city ? ' — ' + escapeHtml(item.city) : '') + '</div>' +
+          '<small>' + escapeHtml(prettyTime) + '</small>' +
           '</div>';
 
-        var m = L.circleMarker(ll, {
+        var marker = L.circleMarker(latLng, {
           radius: 6,
           color: color,
           weight: 2,
           fillColor: color,
-          fillOpacity: 0.35
+          fillOpacity: 0.5
         }).bindPopup(popupHtml);
 
-        markerGroup.addLayer(m);
+        marker.on("click", function () {
+          selectLei(leiId);
+        });
+
+        markerGroup.addLayer(marker);
       });
 
-      var line = L.polyline(path, { color: color, weight: 3, opacity: 0.9 });
+      var line = L.polyline(path, {
+        color: color,
+        weight: 3,
+        opacity: 0.9
+      });
+
+      line.on("click", function () {
+        selectLei(leiId);
+      });
+
       clusterGroup.addLayer(markerGroup);
       line.addTo(map);
 
-      leiLayers.set(leiId, { markers: markerGroup, line: line, color: color });
+      leiLayers.set(leiId, {
+        markers: markerGroup,
+        line: line,
+        color: color,
+        points: path
+      });
     });
 
-    if (allLatLngs.length) {
-      var bounds = L.latLngBounds(allLatLngs);
-      map.fitBounds(bounds.pad(0.15));
+    applyFilter(false);
+
+    if (select.value === "__ALL__" && allPoints.length > 0) {
+      map.fitBounds(L.latLngBounds(allPoints).pad(0.12));
     }
   }
 
-  function applyFilter() {
-    var pick = document.getElementById('leiFilter').value;
-    leiLayers.forEach(function (obj, leiId) {
-      var show = (pick === '__ALL__' || pick === leiId);
+  function applyFilter(zoomToSelection) {
+    var selected = document.getElementById("leiFilter").value;
+    var selectedPoints = [];
+
+    leiLayers.forEach(function (layerSet, leiId) {
+      var show = selected === "__ALL__" || selected === leiId;
+
       if (show) {
-        clusterGroup.addLayer(obj.markers);
-        obj.line.addTo(map);
+        if (!clusterGroup.hasLayer(layerSet.markers)) {
+          clusterGroup.addLayer(layerSet.markers);
+        }
+
+        if (!map.hasLayer(layerSet.line)) {
+          layerSet.line.addTo(map);
+        }
+
+        if (selected === leiId) {
+          selectedPoints = layerSet.points.slice();
+        }
       } else {
-        clusterGroup.removeLayer(obj.markers);
-        map.removeLayer(obj.line);
+        if (clusterGroup.hasLayer(layerSet.markers)) {
+          clusterGroup.removeLayer(layerSet.markers);
+        }
+
+        if (map.hasLayer(layerSet.line)) {
+          map.removeLayer(layerSet.line);
+        }
       }
     });
+
+    if (zoomToSelection && selected !== "__ALL__" && selectedPoints.length > 0) {
+      if (selectedPoints.length === 1) {
+        map.setView(selectedPoints[0], 8);
+      } else {
+        map.fitBounds(L.latLngBounds(selectedPoints).pad(0.2));
+      }
+    }
   }
 
-  document.getElementById('leiFilter').addEventListener('change', function () {
-    applyFilter();
-    highlightSelection();
-  });
-  document.getElementById('refreshBtn').addEventListener('click', init);
+  function escapeHtml(value) {
+    return String(value).replace(/[&<>"']/g, function (character) {
+      return {
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        '"': "&quot;",
+        "'": "&#039;"
+      }[character];
+    });
+  }
 
   async function init() {
     try {
       var data = await fetchRows();
       render(data);
-      applyFilter();
-      highlightSelection();
-    } catch (err) {
-      console.error(err);
-      alert('Failed to load data. Check your endpoint and try again.');
+    } catch (error) {
+      console.error(error);
+      alert("Failed to load the TAG Lei map data. Check the browser console for details.");
     }
   }
 
-  // First load
-  init();
-  // Auto-refresh every 2 minutes
-  setInterval(function () { init(); }, 2 * 60 * 1000);
+  document.getElementById("leiFilter").addEventListener("change", function () {
+    applyFilter(true);
+  });
 
+  document.getElementById("refreshBtn").addEventListener("click", function () {
+    init();
+  });
+
+  init();
+
+  // Refresh the data every two minutes.
+  setInterval(function () {
+    init();
+  }, 2 * 60 * 1000);
 })();
 </script>
 </body>
